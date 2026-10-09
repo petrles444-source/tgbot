@@ -28,15 +28,34 @@ r"""Выбор модели: пять вариантов, запасные кл�
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 from pathlib import Path
 from typing import Any
 
-#: Куда класть ключи. Файл вне git — иначе токены уедут в
-#: публичный репозиторий вместе с кодом.
-SECRETS_PATH = Path(__file__).resolve().parent.parent / "секреты" / \
-    "ключи-моделей.local.json"
+#: Где искать ключи моделей, по порядку.
+#:
+#: Список, а не один путь, потому что на сервере файл называется иначе:
+#: там он ` bots/.secret/ключи-моделей.json`, потому что заливается
+#: скриптом запуска, а на своём компьютере —
+#: `bots/секреты/ключи-моделей.local.json`.
+#:
+#: Раньше был один путь — «секреты» на компьютере. На сервере такого
+#: каталога нет, файл читался пустым, ключей не находилось, и бот
+#: отвечал «модель промолчала», хотя ключи рядом лежали.
+_CANDIDATES = (
+    Path(__file__).resolve().parent.parent / "секреты"
+    / "ключи-моделей.local.json",
+    Path(__file__).resolve().parent.parent / ".secret"
+    / "ключи-моделей.json",
+    Path(__file__).resolve().parent / ".secret" / "ключи-моделей.json",
+    Path(__file__).resolve().parent / "config.local.json",
+)
+
+#: Первый найденный файл. Оставлено для совместимости: кое-где в коде
+#: на путь ссылались напрямую.
+SECRETS_PATH = _CANDIDATES[0]
 
 #: Как долго помнить, что модель только что не ответила.
 #:
@@ -51,19 +70,38 @@ COOLDOWN_S = 60.0
 TECH_WORDS = ("HTTP", "Traceback", "Connection", "Timeout", "urlopen")
 
 
+def secret_file() -> Path | None:
+    """Первый файл с ключами, который действительно есть.
+
+    Проверяем наличие, а не предполагаем путь: на сервере имена и
+    папки другие, и молча читать несуществующий файл — это как раз
+    тот случай, когда бот «молчит», ничего не объясняя.
+    """
+    for path in _CANDIDATES:
+        if path.is_file():
+            return path
+    return None
+
+
 def load_secret_keys() -> dict[str, list[str]]:
     """Прочитать ключи из файла, который вне git.
 
     Возвращает словарь `имя провайдера -> список ключей`. Пустой
     словарь — не поломка: значит, ключи не положены, и вызывающий
     код должен честно сказать об этом при старте.
+
+    Понимаются оба вида файла: и `{"providers": {...}}`, как на
+    своём компьютере, и одиночные ключи верхнего уровня — так
+    выглядит старый формат на сервере.
     """
-    if not SECRETS_PATH.is_file():
+    path = secret_file()
+    if path is None:
         return {}
     try:
-        data = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return {}
+
     providers = data.get("providers") or {}
     out: dict[str, list[str]] = {}
     for name, keys in providers.items():
@@ -71,6 +109,18 @@ def load_secret_keys() -> dict[str, list[str]]:
             out[str(name)] = [str(k) for k in keys if k]
         elif isinstance(keys, str) and keys:
             out[str(name)] = [keys]
+
+    # Старый формат: ключи лежат прямо в корне файла, по одному на
+    # провайдера. Без этого сервер остался бы без ключей: он читает
+    # файл, созданный до появления `providers`.
+    for name in ("groq", "openrouter", "mistralai", "nvidia", "z_ai"):
+        if name in out:
+            continue
+        value = data.get(name)
+        if isinstance(value, list) and value:
+            out[name] = [str(k) for k in value if k]
+        elif isinstance(value, str) and value:
+            out[name] = [value]
     return out
 
 
@@ -104,14 +154,29 @@ def _key_for(provider: dict[str, Any]) -> str:
 
     Зачем чередовать
     ----------------
-    У Groq лимит считается на аккаунт, и восемь ключей — это восемь
+    У Groq лимит считается на ключ, и восемь ключей — это восемь
     отдельных квот. Если бить одним ключом, остальные простаивают,
     а при его лимите бот встаёт, хотя семь ключей свободны.
+
+    Что приходит из переменной окружения
+    ------------------------------------
+    На сервере ключи кладутся в переменную окружения, и туда
+    положили только **первый** ключ из списка. Из-за этого
+    чередование там не работало вовсе: остальные семь лежали в
+    файле без дела, а когда первый исчерпывал лимит, бот молчал.
+    Поэтому значение переменной разбирается как список — по
+    запятой или пробелу, — и чередование работает на сервере так
+    же, как на своём компьютере.
     """
     env = str(provider.get("api_key") or "")
-    # Сначала переменная окружения: на сервере ключи приходят оттуда.
     direct = os.environ.get(env, "").strip()
     if direct:
+        # Несколько ключей в одной переменной: выбираем по очереди.
+        if "," in direct or " " in direct:
+            parts = [p for p in re.split(r"[,\s]+", direct) if p]
+            index = _KEY_ROTATION.get(env, 0) % len(parts)
+            _KEY_ROTATION[env] = index + 1
+            return parts[index]
         return direct
 
     store = load_secret_keys()
