@@ -28,10 +28,32 @@ from typing import Any
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
+#: Корень проекта. Файл лежит в корне, поэтому `parent`, а не
+#: `parent.parent`: два уровня вверх уводят на уровень выше папки
+#: проекта, и `BOTS` указывает в пустоту — ровно та ошибка
+#: «No such file or directory», что и выдаёт pytest.
+ROOT = Path(__file__).resolve().parent
 BOTS = ROOT / "bots" / "код"
 if str(BOTS) not in sys.path:
     sys.path.insert(0, str(BOTS))
+
+
+def load_bot(name: str) -> Any:
+    """Загрузить бота как модуль — так это делает сервер.
+
+    Модуль кладётся в `sys.modules` под своим именем: сам бот
+    импортирует соседние модули по имени, а не относительным путём,
+    и без этого загрузка из теста падала бы с `ImportError`.
+    """
+    import importlib.util
+
+    path = BOTS / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader, f"не читается {path}"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture(autouse=True)

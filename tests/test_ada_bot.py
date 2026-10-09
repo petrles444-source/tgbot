@@ -48,6 +48,10 @@ def clean() -> Any:
     """
     ada.CHATS.clear()
     ada.OWN_ID["id"] = None
+    # Память «на это сообщение уже ответили» общая для ботов и
+    # переживает тесты: без сброса второе сообщение с тем же
+    # номером считалось бы повтором, и проверки на молчание падали бы.
+    ada._ANSWERED.clear()
     sent: list[tuple[int, str]] = []
     ada.send = lambda token, chat, text: sent.append((chat, text))
     ada.ask_model = lambda provider, prompt, system="", key="": f"ОТВЕТ: {prompt[-40:]}"
@@ -56,11 +60,28 @@ def clean() -> Any:
     return sent
 
 
+#: Счётчик для `message_id`. Настоящий Telegram даёт каждому
+#: сообщению свой номер, а тут раньше у всех было `1` — и проверка
+#: «в беседе отвечает только один бот» считала второе сообщение
+#: повтором первого. Теперь номера разные, как в жизни.
+_next_id = 0
+
+
 def message(chat_id: int, text: str, *, private: bool = False,
-            bot: bool = False, name: str = "Иван") -> dict[str, Any]:
-    """Собрать входящее сообщение телеграма."""
+            bot: bool = False, name: str = "Иван",
+            mid: int = 0) -> dict[str, Any]:
+    """Собрать входящее сообщение телеграма.
+
+    Номер сообщения можно задать самому через `mid`: он определяет,
+    ответил ли уже кто-то на это сообщение в беседе, поэтому тест
+    на «три бота, одна реплика» обязан задать его явно.
+    """
+    global _next_id
+    if not mid:
+        _next_id += 1
+        mid = _next_id
     return {
-        "message_id": 1,
+        "message_id": mid,
         "chat": {"id": chat_id, "type": "private" if private else "group"},
         "from": {"id": 7, "is_bot": bot, "first_name": name},
         "text": text,

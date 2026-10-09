@@ -67,6 +67,9 @@ def bot(request: Any) -> Any:
     """
     module = request.param
     module.CHATS.clear()
+    # Память отвеченных сообщений переживает тесты — см. conftest.
+    if hasattr(module, "_ANSWERED"):
+        module._ANSWERED.clear()
     sent: list[tuple[int, str]] = []
     module.send = lambda token, chat, text: sent.append((chat, text))
     module.ask_model = lambda provider, prompt, system="", key="": f"ОТВЕТ: {prompt[-30:]}"

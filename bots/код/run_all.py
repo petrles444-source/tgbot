@@ -79,6 +79,31 @@ def base_config() -> dict:
     return data
 
 
+def build_config(entry: dict[str, str], shared: dict,
+                 token: str) -> dict:
+    """Настройки одного бота: общие плюс его собственные.
+
+    Ключевое здесь — `face` и `char_key`. Раньше персона задавалась
+    строкой `persona_key`, а `load_config()` её игнорировал и брал
+    первую персону из файла: все три бота выходили как «Ада». Теперь
+    лицо выбирается по ключу явно, и у Анатолия свой характер.
+    """
+    config = dict(shared)
+    persona_key = str(entry.get("persona_key")
+                      or entry.get("key") or "ada")
+    config["telegram_token"] = token
+    config["token"] = token
+    config["persona_key"] = persona_key
+    config["char_key"] = persona_key
+
+    face = ada_bot.persona_by_key(persona_key)
+    if face is None:
+        face = ada_bot.persona_by_key("ada")
+    config["face"] = face
+    config["persona"] = ada_bot.build_persona_text(face, config, 0)
+    return config
+
+
 def run_one(entry: dict[str, str], shared: dict) -> None:
     """Один бот в своём потоке, с перезапуском при падении."""
     key = str(entry.get("key") or "?")
@@ -93,13 +118,13 @@ def run_one(entry: dict[str, str], shared: dict) -> None:
 
     while True:
         try:
-            config = dict(shared)
-            config["telegram_token"] = token
-            config["persona_key"] = str(entry.get("persona_key") or key)
+            config = build_config(entry, shared, token)
             os.environ["TELEGRAM_TOKEN"] = token
             ada_bot.OWN_ID["id"] = 0
             ada_bot.CHATS.clear()
-            ada_bot.main()
+            # Именно `config`: без него `main()` читает общий файл
+            # и все трое выходят с одинаковыми настройками.
+            ada_bot.main(config)
             return  # main() выходит только по Ctrl+C
         except KeyboardInterrupt:
             print(f"[{label}] остановлен", flush=True)
@@ -115,7 +140,49 @@ def run_one(entry: dict[str, str], shared: dict) -> None:
             time.sleep(RESTART_SLEEP_S)
 
 
+def acquire_lock() -> bool:
+    """Занять файл-блокировку: один запуск на сервере.
+
+    Зачем
+    -----
+    При двух открытых консолях запускались два процесса с одними и
+    теми же токенами. Telegram на такой запрос отвечает
+    `409 Conflict`, и ни один из процессов не получал обновлений:
+    в логе шло «ошибка опроса: HTTP Error 409: Conflict» без
+    единого ответа в чат.
+
+    Блокировка проверяется до старта потоков, а не внутри: иначе
+    оба процесса успевают пройти проверку и поймать обновления
+    поровну — Telegram отдаёт обновление только одному.
+    """
+    path = Path(__file__).resolve().parent / ".bot.lock"
+    try:
+        handle = path.open("x", encoding="utf-8")
+    except FileExistsError:
+        return False
+    handle.write(str(os.getpid()))
+    handle.close()
+    return True
+
+
+def release_lock() -> None:
+    """Снять блокировку при выходе."""
+    path = Path(__file__).resolve().parent / ".bot.lock"
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def main() -> int:
+    if not acquire_lock():
+        print("Боты уже запущены в другой консоли.")
+        print("Закрой ту консоль, иначе Telegram будет отвечать 409 "
+              "и сообщения не дойдут ни до одного бота.")
+        print("Если её нет — удали файл bots/код/.bot.lock и запусти "
+              "снова.")
+        return 1
+
     bots = load_bots()
     shared = base_config()
 
@@ -169,3 +236,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("остановлено", flush=True)
         sys.exit(0)
+    finally:
+        # Блокировку снимаем при любом выходе, иначе после остановки
+        # боты не запустятся заново: файл останется, и новый процесс
+        # решит, что где-то ещё работает копия.
+        release_lock()

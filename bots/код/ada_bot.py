@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -115,6 +116,20 @@ LONG_POLL_S = 0
 #: двадцать опросов в минуту, запас есть, а отзывчивость на живого
 #: человека всё ещё лучше трёх секунд.
 POLL_SLEEP_S = 3.0
+
+#: Пауза при неудачном опросе растёт: 6, 12, 24… до этого потолка.
+#:
+#: Прокси PythonAnywhere ложится на минуты. При постоянных шести
+#: секундах бот за минуту делал десять бесполезных запросов, а
+#: суточный лимит в 100 секунд процессора уходил на них: на
+#: скриншоте человека лог состоял из тысяч одинаковых строк
+#: «Tunnel connection failed: 503», а бот при этом молчал.
+MAX_POLL_SLEEP_S = 120.0
+
+#: Сколько подряд неудач потерпеть, прежде чем перезапустить поток.
+#: При паузе до двух минут это около получаса неработающего прокси —
+#: дальше ждать уже не имеет смысла, лучше начать заново.
+POLL_FAIL_MAX_STEPS = 15
 
 #: Сетевой таймаут.
 HTTP_TIMEOUT_S = 45.0
@@ -497,6 +512,49 @@ MODEL_CMDS = {
 
 # ------------------------------------------------------------- разбор
 
+#: Сообщения, на которые в беседе кто-то уже ответил.
+#:
+#: Ключ — пара `чат, номер сообщения`. Нужен потому, что боты
+#: работают тремя потоками в одном процессе и делят этот словарь:
+#: в беседе сидят все трое, и без такого словаря на одно сообщение
+#: приходило три одинаковых ответа. На скриншоте это и видно: два
+#: «Привет. Ну как ты? Рассказывай.» подряд от одной реплики.
+#:
+#: Словарь общий для потоков, но пишется под блокировкой: иначе два
+#: потока успевают прочитать одно и то же отсутствие ключа и оба
+#: решат, что ответить.
+_ANSWERED: dict[tuple[int, int], float] = {}
+_ANSWERED_LOCK = threading.Lock()
+
+#: Сколько помнить отвеченное. Сообщение может прийти повторно при
+#: перезапуске опроса, и без этого бот ответил бы на него снова.
+_ANSWERED_TTL_S = 300.0
+
+#: Больше скольких записей держать. Словарь не должен расти вечно:
+#: в оживлённой беседе это сотни сообщений в час.
+_ANSWERED_MAX = 500
+
+
+def _claim_for_answer(chat_id: int, message_id: int) -> bool:
+    """Занять сообщение для ответа. `False` — уже отвечено.
+
+    Помечает сообщение сразу, до отправки. Иначе при медленном
+    ответе модели второй бот успел бы занять то же сообщение, пока
+    первый думает, и получилось бы ровно то, от чего защищаемся.
+    """
+    now = time.time()
+    key = (chat_id, message_id)
+    with _ANSWERED_LOCK:
+        # Чистим протухшее, иначе словарь вырастет без границ.
+        if len(_ANSWERED) > _ANSWERED_MAX:
+            cutoff = now - _ANSWERED_TTL_S
+            for old in [k for k, at in _ANSWERED.items() if at < cutoff]:
+                _ANSWERED.pop(old, None)
+        if key in _ANSWERED:
+            return False
+        _ANSWERED[key] = now
+    return True
+
 
 def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
     """Одно входящее сообщение."""
@@ -510,6 +568,16 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         return
     sender = (message.get("from") or {}).get("first_name") or "участник"
     is_private = str(chat.get("type") or "") == "private"
+    message_id = int(message.get("message_id") or 0)
+
+    # В беседе отвечает только один из трёх ботов. Команды не
+    # трогаем: `/статус` человек шлёт конкретному боту по имени.
+    if not is_private and message_id:
+        command_head = text.split()[0].lower().split("@")[0]
+        if command_head not in COMMANDS and \
+                command_head not in MODEL_CMDS:
+            if not _claim_for_answer(int(chat_id), message_id):
+                return
 
     token = config["token"]
     state = chat_state(int(chat_id))
@@ -673,8 +741,19 @@ def set_avatar(config: dict[str, Any]) -> bool:
         return False
 
 
-def main() -> None:
-    config = load_config()
+def main(config: dict[str, Any] | None = None) -> None:
+    """Опрос Telegram до бесконечности.
+
+    Параметр `config` обязателен для случая, когда ботов несколько.
+    Раньше он не принимался вовсе, и `main()` сам вызывал
+    `load_config()`, который читает **общий** `config.json`. Из-за
+    этого все три потока получали одинаковые настройки: в логе
+    подряд шло «запущена как Ада» три раза и «моделей: 1» три раза,
+    хотя у Анатолия и Кети своя персона и свой набор моделей.
+    Теперь настройки приходят от того, кто запускает поток.
+    """
+    if config is None:
+        config = load_config()
     if not config["token"]:
         raise SystemExit(
             "Нет токена Telegram: впишите telegram_token в config.json "
@@ -687,21 +766,31 @@ def main() -> None:
         me = telegram(config["token"], "getMe")
         OWN_ID["id"] = me.get("id")
         print(f"запущена как {config['face']['name']}: "
-              f"@{me.get('username')} (id {me.get('id')})",
+              f"@{me.get('username')} (id {me.get('id')}), "
+              f"характер {config.get('char_key')}, "
+              f"моделей {len(config['providers'])}",
               flush=True)
     except Exception as exc:
         raise SystemExit(f"Telegram недоступен: {exc}") from exc
-    print(f"моделей: {len(config['providers'])}", flush=True)
     if set_avatar(config):
         print(f"аватар: {config['face']['name']}", flush=True)
 
     offset = 0
+    #: Сколько подряд не удалось спросить. Прокси PythonAnywhere
+    #: периодически лежит, и раньше бот долбил его каждые шесть
+    #: секунд: в логе набегали тысячи строк «503», а суточный лимит
+    #: процессора уходил на эти бесполезные попытки. Теперь пауза
+    #: растёт, а после `SLEEP_MAX_STEPS` повторов бот сам перезапускает
+    #: поток.
+    failures = 0
+
     while True:
         try:
             url = ("https://api.telegram.org/bot" + config["token"]
                    + f"/getUpdates?timeout={LONG_POLL_S}&offset={offset}")
             with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT_S) as resp:
                 updates = json.loads(resp.read().decode("utf-8")).get("result") or []
+            failures = 0
             for update in updates:
                 offset = max(offset, int(update.get("update_id", 0)) + 1)
                 handle(config, update.get("message") or {})
@@ -710,12 +799,21 @@ def main() -> None:
             print("остановлена", flush=True)
             return
         except Exception as exc:
+            failures += 1
             # Сеть моргнула — ждём и продолжаем: бот не должен умирать
-            # из-за одного обрыва. Пауза здесь длиннее обычной, потому
-            # что туннель может лежать минутами, и короткая пауза
-            # превратилась бы в сотни попыток впустую.
-            print(f"ошибка опроса: {exc}", flush=True)
-            time.sleep(POLL_SLEEP_S * 2)
+            # из-за одного обрыва. Но пауза растёт: при лежащем прокси
+            # шесть секунд на попытку — это сотни запросов в пустоту.
+            pause = min(POLL_SLEEP_S * 2 * failures, MAX_POLL_SLEEP_S)
+            if failures == 1 or failures % 20 == 0:
+                print(f"ошибка опроса ({failures}): {exc}, "
+                      f"жду {pause:.0f} с", flush=True)
+            if failures >= POLL_FAIL_MAX_STEPS:
+                # Дальше ждать бессмысленно: поднимаем поток заново,
+                # он перечитает настройки и попробует с чистого листа.
+                print(f"опрос не восстановился за {failures} попыток — "
+                      "перезапускаю бота", flush=True)
+                raise RuntimeError(f"опрос не восстановился: {exc}") from exc
+            time.sleep(pause)
         time.sleep(POLL_SLEEP_S)
 
 
