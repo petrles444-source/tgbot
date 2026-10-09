@@ -7,7 +7,7 @@
 |---|---|---|---|
 | `@adaweffeBot` | `ADA_TOKEN` | Ада | девушка для общения, флиртует |
 | `@social_neuro_bot` | `ANATOLY_TOKEN` | Анатолий | помощник по программированию |
-| `@social_neuro2_bot` | `Social_TOKEN` | Кети | помощница по текстам |
+| `@social_neuro2_bot` | `Social_TOKEN` | Effy | помощница по текстам |
 
 ## Запуск на своём компьютере
 

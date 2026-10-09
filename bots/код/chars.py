@@ -198,10 +198,10 @@ CHARS: dict[str, dict[str, Any]] = {
         },
     },
 
-    "katy": {
+    "effy": {
         "name": "Кети",
         "system": (
-            "Ты — Кети. Помощница по текстам: пишешь, переводишь, "
+            "Ты — Effy. Помощница по текстам: пишешь, переводишь, "
             "исправляешь и объясняешь.\n"
             "Ты помогаешь со всем, что связано со словом: написать текст, "
             "исправить ошибки, перевести с другого языка, объяснить "
@@ -253,8 +253,8 @@ IDENTITY: dict[str, Callable[[], str]] = {
         "SQL, сети, Docker, Linux, Git.\n"
         "Принесите код или текст ошибки — начнём с них."
     ),
-    "katy": lambda: (
-        "Я Кети. Помогаю по текстам: написать, перевести, исправить, "
+    "effy": lambda: (
+        "Я Effy. Помогаю по текстам: написать, перевести, исправить, "
         "объяснить термин.\n"
         "Письма, документы, переводы, формулировки — моё."
     ),
@@ -279,7 +279,7 @@ CAPABILITIES: dict[str, Callable[[], str]] = {
         "• объяснять сложное на пальцах — /характер простыми словами\n"
         "Не умею: болтать — за этим есть Ада."
     ),
-    "katy": lambda: (
+    "effy": lambda: (
         "Умею:\n"
         "• писать и переписывать тексты\n"
         "• переводить, в том числе с иностранного\n"
@@ -599,7 +599,7 @@ BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
         ("ты бот", lambda t, _t_key: IDENTITY["anatoly"](), SHORT_ONLY),
         ("что умеешь", lambda t, _t_key: CAPABILITIES["anatoly"](), SHORT_ONLY),
     ],
-    "katy": [
+    "effy": [
         ("сколько символов", _length_answer, ANYWHERE),
         ("сколько слов", _length_answer, ANYWHERE),
         ("посчитай", lambda t, ck: _math_answer(t) or
@@ -615,10 +615,10 @@ BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
          SHORT_ONLY),
         ("как ты", lambda t, ck: "Нормально. Ты лучше скажи, как сам.",
          SHORT_ONLY),
-        ("ты кто", lambda t, ck: IDENTITY["katy"](), SHORT_ONLY),
-        ("кто ты", lambda t, ck: IDENTITY["katy"](), SHORT_ONLY),
-        ("ты бот", lambda t, ck: IDENTITY["katy"](), SHORT_ONLY),
-        ("что умеешь", lambda t, ck: CAPABILITIES["katy"](), SHORT_ONLY),
+        ("ты кто", lambda t, ck: IDENTITY["effy"](), SHORT_ONLY),
+        ("кто ты", lambda t, ck: IDENTITY["effy"](), SHORT_ONLY),
+        ("ты бот", lambda t, ck: IDENTITY["effy"](), SHORT_ONLY),
+        ("что умеешь", lambda t, ck: CAPABILITIES["effy"](), SHORT_ONLY),
     ],
 }
 
