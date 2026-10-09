@@ -52,6 +52,7 @@ from typing import Any
 
 try:
     import chars as chars_mod
+    import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -60,6 +61,8 @@ try:
                                status_lines)
 except ImportError:  # pragma: no cover - прямой запуск из другой папки
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import chars as chars_mod
+    import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -314,19 +317,25 @@ def send(token: str, chat_id: int | str, text: str) -> None:
 
 
 def ask_model(provider: dict[str, Any], prompt: str,
-              system: str = "") -> str:
+              system: str = "", key: str = "") -> str:
     """Спросить модель через адрес, совместимый с OpenAI.
 
     Такой адрес у openrouter, groq, mistralai, nvidia, z_ai: одна форма
     запроса на всех, и ключ провайдера уходит только ему.
+
+    Ключ приходит параметром, а не берётся из `provider`. Раньше он
+    читался из настроек, где лежит **имя переменной** (`GROQ_API_KEY`),
+    а не сам ключ, — из-за чего в запрос уходила строка
+    «GROQ_API_KEY» вместо настоящего ключа и провайдер отвечал 403.
+    Теперь ключ подставляет `modelswitch`: он же умеет чередовать
+    несколько ключей одного провайдера.
     """
     base = str(provider.get("base_url") or "").rstrip("/")
     if not base:
-        return "Провайдер не настроен: пустой base_url."
-    key = str(provider.get("api_key") or "")
+        raise RuntimeError("провайдер не настроен: пустой адрес")
     if not key:
-        return (f"У провайдера «{provider.get('name', '?')}» нет ключа — "
-                "впишите api_key в config.json на сервере.")
+        raise RuntimeError(
+            f"у провайдера «{provider.get('name', '?')}» нет ключа")
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -447,6 +456,23 @@ def _cmd_forget(config: dict[str, Any], state: dict[str, Any],
     return forget_text(config["face"])
 
 
+def _cmd_models(config: dict[str, Any], state: dict[str, Any],
+                chat_id: int, arg: str = "") -> str:
+    """Какие модели доступны.
+
+    Аргумент принимает хотя его и не использует: вызывающий код
+    передаёт хвост команды одинаково всем обработчикам этого
+    словаря, иначе `/модели` без хвоста падало бы с TypeError.
+    """
+    return modelswitch_mod.models_list(config)
+
+
+def _cmd_model(config: dict[str, Any], state: dict[str, Any],
+               chat_id: int, arg: str = "") -> str:
+    """Переключить модель."""
+    return modelswitch_mod.switch(config, arg)
+
+
 #: Команды и их обработчики. Словарь, а не цепочка сравнений: новую
 #: команду добавляется одной строкой, и её невозможно забыть в
 #: справке, потому что справка строится из того же набора.
@@ -457,6 +483,15 @@ COMMANDS = {
     "/whoami": _cmd_whoami,
     "/name": _cmd_name,
     "/forget": _cmd_forget,
+}
+
+#: Команды выбора модели принимают аргумент, а остальные — нет.
+#: Поэтому их нельзя положить в общий словарь: он вызывает
+#: обработчик с тремя аргументами, а здесь нужен хвост команды.
+MODEL_CMDS = {
+    "/модель": _cmd_model,
+    "/модели": _cmd_models,
+    "/model": _cmd_models,
 }
 
 
@@ -489,6 +524,16 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
     # «/status» и начинает отвечать на список команд.
     if command in COMMANDS:
         answer = COMMANDS[command](config, state, chat_id)
+        if answer:
+            send(token, chat_id, answer)
+        return
+
+    # Выбор модели — тоже команда человека, а не вопрос к модели:
+    # спрашивать нейросеть о том, какую модель включить, бессмысленно,
+    # модель о своих настройках не знает.
+    if command in MODEL_CMDS:
+        answer = MODEL_CMDS[command](config, state, chat_id,
+                                    text[len(command):].strip())
         if answer:
             send(token, chat_id, answer)
         return
@@ -556,13 +601,19 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         # характера, а не чужие.
         system = chars_mod.prompt(config.get("char_key")
                                       or "ada", chat_id)
-        answer = ask_model(providers[config["active"]], prompt, system)
+        # Через modelswitch, а не напрямую: он перебирает запасные
+        # модели и ключи сам. Раньше здесь стоял прямой вызов
+        # `ask_model(providers[config["active"]], ...)`, и человек
+        # в чате видел «Не получилось ответить: провайдер ответил
+        # HTTP 403» вместо ответа.
+        answer = modelswitch_mod.ask(config, prompt, system,
+                                     asker=ask_model)
         # Одноразовый признак гасится после ответа: «максимум» должен
         # означать один раз, иначе каждый следующий вопрос снова
         # получал бы простыню.
         chars_mod.consume_one_shot(config.get("char_key") or "ada", chat_id)
-    except Exception as exc:
-        answer = f"Не получилось ответить: {exc}"
+    except Exception:
+        answer = "Сейчас не получается ответить, попробуй через минуту."
     if answer:
         send(token, chat_id, answer)
 

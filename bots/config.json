@@ -1,13 +1,54 @@
 {
-  "_что-это": "Настройки, из которых боты читают модель. Токены сюда не кладутся: они приходят из переменных окружения.",
+  "_что-это": "Настройки, из которых боты читают модель. Токены сюда не кладутся: они приходят из переменных окружения, которые читаются из bots/секреты/ключи-моделей.local.json.",
   "active": 0,
   "persona_key": "ada",
   "providers": [
     {
       "name": "groq",
+      "label": "Быстро и по-русски",
+      "model": "qwen/qwen3.8-27b",
       "base_url": "https://api.groq.com/openai/v1",
       "api_key": "GROQ_API_KEY",
-      "model": "llama-3.1-8b-instant"
+      "note": "0,2–0,3 с. Лучший вариант на каждый день."
+    },
+    {
+      "name": "groq",
+      "label": "Умнее, но медленнее",
+      "model": "openai/gpt-oss-120b",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key": "GROQ_API_KEY",
+      "note": "0,6–16 с. Размышляет, отвечает подробнее."
+    },
+    {
+      "name": "openrouter",
+      "label": "Через OpenRouter (запас)",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "OPENROUTER_API_KEY",
+      "note": "0,7–2,5 с. Работает, когда Groq занят."
+    },
+    {
+      "name": "openrouter",
+      "label": "Живой разговор (OpenRouter)",
+      "model": "inclusionai/ling-3.1-flash",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "OPENROUTER_API_KEY",
+      "note": "1,6–3 с, отвечает бойко."
+    },
+    {
+      "name": "openrouter",
+      "label": "Запасной, очень быстро",
+      "model": "liquid/lfm-2.5-2.6b:free",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "OPENROUTER_API_KEY",
+      "note": "Запас на случай, если остальные не отвечают."
     }
+  ],
+  "fallback_models": [
+    "qwen/qwen3.8-27b",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "inclusionai/ling-3.1-flash",
+    "liquid/lfm-2.5-2.6b:free",
+    "openai/gpt-oss-120b"
   ]
 }

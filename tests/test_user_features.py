@@ -69,7 +69,11 @@ def bot(request: Any) -> Any:
     module.CHATS.clear()
     sent: list[tuple[int, str]] = []
     module.send = lambda token, chat, text: sent.append((chat, text))
-    module.ask_model = lambda provider, prompt, system="": f"ОТВЕТ: {prompt[-30:]}"
+    module.ask_model = lambda provider, prompt, system="", key="": f"ОТВЕТ: {prompt[-30:]}"
+    # Бот идёт к модели через `modelswitch`, и подмена `ask_model`
+    # работает: каждый бот передаёт свою функцию запроса, а не берёт
+    # чужую из `ada_bot`. Ключ и чистая память перебора — в
+    # `conftest.py`, общие для всех файлов с ботами.
     module.sent = sent  # type: ignore[attr-defined]
     return module
 
@@ -158,7 +162,7 @@ def test_forget_не_попадает_в_историю(bot: Any) -> None:
 def test_после_forget_модель_не_видит_старого(bot: Any) -> None:
     """Проверяется по тому, что реально уходит в модель."""
     captured: list[str] = []
-    bot.ask_model = lambda provider, prompt, system="": captured.append(prompt) or "ок"
+    bot.ask_model = lambda provider, prompt, system="", key="": captured.append(prompt) or "ок"
     bot.handle(CONFIG, message(7, "что ты умеешь", private=True))
     bot.handle(CONFIG, message(7, "/forget", private=True))
     bot.handle(CONFIG, message(7, "а теперь?", private=True))

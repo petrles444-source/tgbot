@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 try:
+    import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, SCIENCE_LEVEL, STYLE,
                          avatar_png, pick_persona, persona_by_key,
                          profile_photo_request, style_note)
@@ -48,6 +49,7 @@ try:
                                status_lines)
 except ImportError:  # pragma: no cover - прямой запуск из другой папки
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, SCIENCE_LEVEL, STYLE,
                          avatar_png, pick_persona, persona_by_key,
                          profile_photo_request, style_note)
@@ -169,14 +171,17 @@ def set_avatar(token: str, face: dict[str, Any]) -> bool:
 
 
 def ask_model(provider: dict[str, Any], prompt: str,
-              system: str = "") -> str:
+              system: str = "", key: str = "") -> str:
     base = str(provider.get("base_url") or "").rstrip("/")
     if not base:
-        return "Провайдер не настроен: пустой base_url."
-    key = str(provider.get("api_key") or "")
+        raise RuntimeError("провайдер не настроен: пустой адрес")
+    # Ключ приходит параметром, а не берётся из настроек: там лежит
+    # имя переменной (`GROQ_API_KEY`), а не сам ключ. Из-за этого в
+    # запрос уходила строка с именем переменной и провайдер отвечал
+    # 403. Настоящий ключ подставляет `modelswitch`.
     if not key:
-        return (f"У провайдера «{provider.get('name', '?')}» нет ключа — "
-                "впишите api_key в настройках на сервере.")
+        raise RuntimeError(
+            f"у провайдера «{provider.get('name', '?')}» нет ключа")
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -397,9 +402,13 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
     if not prompt:
         return
     try:
-        answer = ask_model(providers[config["active"]], prompt, config["persona"])
-    except Exception as exc:
-        answer = f"Не получилось ответить: {exc}"
+        # Через modelswitch: он переберёт запасные модели и ключи сам.
+        # Раньше здесь стоял прямой вызов одной модели, и человек в чате
+        # видел «Не получилось ответить: провайдер ответил HTTP 403».
+        answer = modelswitch_mod.ask(config, prompt, config["persona"],
+                                     asker=ask_model)
+    except Exception:
+        answer = "Сейчас не получается ответить, попробуй через минуту."
     if answer:
         send(token, chat_id, answer)
 

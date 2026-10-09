@@ -1,0 +1,272 @@
+r"""Выбор модели: пять вариантов, запасные ключи, тихий переход.
+
+Зачем этот файл
+---------------
+Боты сидели на одной модели — `llama-3.1-8b-instant` от Groq, —
+и когда её выключили, всё разом сломалось: человек писал, а бот
+отвечал «Не получилось ответить: провайдер ответил HTTP 403».
+При этом в хранилище zagent лежало двадцать четыре живых ключа и
+ещё несколько моделей, о которых бот не знал.
+
+Здесь три вещи, которых раньше не было:
+
+1. **Пять моделей на выбор.** Не одна настройка, а список с
+   переключением прямо в чате.
+2. **Запасные ключи.** У Groq восемь ключей: при лимите на
+   аккаунт бот берёт следующий, а не жмёт «провайдер ответил
+   429» человеку в чат.
+3. **Тихий переход.** Если модель не ответила, бот пробует
+   следующую и отвечает один раз — отвечающим текстом, а не
+   техническим сообщением об ошибке.
+
+Почему список моделей в `config.json`, а не здесь
+----------------------------------------------
+Чтобы смена модели не требовала правки кода: список лежит в
+настройках, этот файл только умеет по нему ходить.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+#: Куда класть ключи. Файл вне git — иначе токены уедут в
+#: публичный репозиторий вместе с кодом.
+SECRETS_PATH = Path(__file__).resolve().parent.parent / "секреты" / \
+    "ключи-моделей.local.json"
+
+#: Как долго помнить, что модель только что не ответила.
+#:
+#: Цифра не случайная: при 429 провайдер просит подождать, и без
+#: паузы бот долбит его тем же запросом — и получает 429 снова.
+#: Минута — примерно то, что просит Groq в заголовке Retry-After.
+COOLDOWN_S = 60.0
+
+#: Куда именно не показывать человекам технические подробности.
+#: Раньше в чат улетало «провайдер ответил HTTP 403» — человеку
+#: это ничего не объясняет, только пугает.
+TECH_WORDS = ("HTTP", "Traceback", "Connection", "Timeout", "urlopen")
+
+
+def load_secret_keys() -> dict[str, list[str]]:
+    """Прочитать ключи из файла, который вне git.
+
+    Возвращает словарь `имя провайдера -> список ключей`. Пустой
+    словарь — не поломка: значит, ключи не положены, и вызывающий
+    код должен честно сказать об этом при старте.
+    """
+    if not SECRETS_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    providers = data.get("providers") or {}
+    out: dict[str, list[str]] = {}
+    for name, keys in providers.items():
+        if isinstance(keys, list):
+            out[str(name)] = [str(k) for k in keys if k]
+        elif isinstance(keys, str) and keys:
+            out[str(name)] = [keys]
+    return out
+
+
+#: Ключи, заданные прямо в настройках. Пусто в работе: ключи лежат
+#: в файле вне git и читаются оттуда. Нужно для проверок — тестам
+#: незачем читать настоящие ключи с диска.
+KEYS: dict[str, list[str]] = {}
+
+
+#: Когда в следующий раз можно пробовать модель снова.
+#: Ключ — `провайдер/модель`, значение — время в секундах.
+_BLOCKED_UNTIL: dict[str, float] = {}
+
+#: Какой ключ какого провайдера пробовали последним. Нужен, чтобы
+#: при лимите переходить на следующий по кругу, а не долбить один.
+_KEY_ROTATION: dict[str, int] = {}
+
+
+def _block(provider: dict[str, Any]) -> None:
+    """Запомнить: эта модель сейчас не работает."""
+    name = f"{provider.get('name')}/{provider.get('model')}"
+    _BLOCKED_UNTIL[name] = time.time() + COOLDOWN_S
+
+
+def _is_cool(name: str) -> bool:
+    return _BLOCKED_UNTIL.get(name, 0.0) > time.time()
+
+
+def _key_for(provider: dict[str, Any]) -> str:
+    """Взять ключ провайдера, чередуя их.
+
+    Зачем чередовать
+    ----------------
+    У Groq лимит считается на аккаунт, и восемь ключей — это восемь
+    отдельных квот. Если бить одним ключом, остальные простаивают,
+    а при его лимите бот встаёт, хотя семь ключей свободны.
+    """
+    env = str(provider.get("api_key") or "")
+    # Сначала переменная окружения: на сервере ключи приходят оттуда.
+    direct = os.environ.get(env, "").strip()
+    if direct:
+        return direct
+
+    store = load_secret_keys()
+    # Имя переменной вида `GROQ_API_KEY` -> `groq`.
+    name = env.split("_")[0].lower() if env else ""
+    keys = (KEYS.get(str(provider.get("name")))
+            or KEYS.get(name)
+            or store.get(str(provider.get("name")))
+            or store.get(name) or [])
+    if not keys:
+        return ""
+    index = _KEY_ROTATION.get(env, 0) % len(keys)
+    _KEY_ROTATION[env] = index + 1
+    return keys[index]
+
+
+def _human(exc: Exception) -> str:
+    """Ошибку провайдера — по-человечески, без кодов и трассировок."""
+    text = str(exc)
+    if any(word in text for word in TECH_WORDS):
+        return "сейчас не получается ответить, попробуй через минуту"
+    return text
+
+
+def provider_pool(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Список моделей, которые попробовать по очереди.
+
+    Первым идёт выбранная человеком, дальше — запасные из
+    `fallback_models`. Модели, на которые повешен бан, пропускаются:
+    если Groq вернул 429, второй раз стучаться в ту же дверь
+    бессмысленно, за минуту всё равно не отпустит.
+    """
+    providers = config.get("providers") or []
+    if not providers:
+        return []
+
+    by_model = {str(p.get("model")): p for p in providers}
+    order: list[dict[str, Any]] = []
+
+    active = int(config.get("active") or 0)
+    if 0 <= active < len(providers):
+        order.append(providers[active])
+
+    for name in config.get("fallback_models") or []:
+        provider = by_model.get(str(name))
+        if provider and provider not in order:
+            order.append(provider)
+
+    for provider in providers:
+        if provider not in order:
+            order.append(provider)
+
+    return [p for p in order
+            if not _is_cool(f"{p.get('name')}/{p.get('model')}")]
+
+
+def ask(config: dict[str, Any], prompt: str, system: str,
+         asker: Any = None) -> str:
+    """Спросить модель, молча перебирая запасные.
+
+    Возвращает текст ответа либо короткое объяснение по-человечески.
+    Больше не бросает исключений в чат: раньше
+    `handle()` ловил их и подставлял «провайдер ответил HTTP 403»,
+    и человек видел технический текст вместо ответа.
+
+    Параметр `asker` — функция запроса того бота, который спросил.
+    Раньше она бралась из `ada_bot` жёстко, и `linda_bot` звал
+    модели через чужую функцию: подмена в тестах попадала не туда,
+    а у двух ботов на одном сервере одна ломала другую. Теперь каждый
+    передаёт свою, и подмена работает там, где её ждут.
+    """
+    if asker is None:
+        from ada_bot import ask_model as asker  # локальный: цикл импорта
+
+    pool = provider_pool(config)
+    if not pool:
+        return "Модели не настроены."
+
+    last = "сейчас не получается ответить, попробуй позже"
+    for provider in pool:
+        key = _key_for(provider)
+        if not key:
+            last = "ключ к модели не задан"
+            continue
+        try:
+            answer = asker(provider, prompt, system, key=key)
+        except Exception as exc:  # noqa: BLE001
+            _block(provider)
+            last = _human(exc)
+            continue
+        if answer:
+            return answer
+        last = "модель промолчала"
+
+    return last
+
+
+#: Когда в прошлый раз объясняли, что всё заблокировано. Чтобы не
+#: повторять одно и то же объяснение на каждое сообщение.
+_LAST_NOTICE: float = 0.0
+
+
+def _blocked_notice() -> None:
+    global _LAST_NOTICE
+    _LAST_NOTICE = time.time()
+
+
+def models_list(config: dict[str, Any]) -> str:
+    """Что сейчас выбрано и что можно переключить."""
+    providers = config.get("providers") or []
+    if not providers:
+        return "Модели не настроены."
+    active = int(config.get("active") or 0)
+    lines = ["Модели, между которыми можно переключаться:", ""]
+    for index, provider in enumerate(providers):
+        mark = "сейчас эта" if index == active else "  "
+        lines.append(f"{mark} {index + 1}. {provider.get('label', '')}"
+                     f" — {provider.get('model', '')}")
+        note = str(provider.get("note") or "").strip()
+        if note:
+            lines.append(f"       {note}")
+    lines += ["", "Переключить: /модель 2. Показать: /модели"]
+    return "\n".join(lines)
+
+
+def switch(config: dict[str, Any], arg: str) -> str:
+    """Переключить модель по номеру или по имени."""
+    providers = config.get("providers") or []
+    if not providers:
+        return "Модели не настроены."
+    arg = arg.strip()
+    if not arg:
+        return models_list(config)
+
+    index = -1
+    if arg.isdigit():
+        candidate = int(arg) - 1
+        if 0 <= candidate < len(providers):
+            index = candidate
+    if index < 0:
+        low = arg.lower()
+        for position, provider in enumerate(providers):
+            if low in str(provider.get("label", "")).lower() or \
+                    low == str(provider.get("model", "")).lower():
+                index = position
+                break
+    if index < 0:
+        return (f"Нет такой модели. Их {len(providers)} — "
+                f"номер от 1 до {len(providers)}.")
+
+    config["active"] = index
+    # Переключились — бан с прошлой модели снимаем: человек мог
+    # выбрать её специально, после её починки.
+    _BLOCKED_UNTIL.clear()
+    _LAST_NOTICE = 0.0
+    chosen = providers[index]
+    return (f"Теперь: {chosen.get('label', '')} "
+            f"({chosen.get('model', '')}).")

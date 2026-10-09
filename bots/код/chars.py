@@ -47,6 +47,7 @@ r"""Характеры ботов: кто есть кто и как настра
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from pathlib import Path
@@ -507,9 +508,43 @@ ANYWHERE = False
 #: Порядок важен: сперва то, что человек просит чаще и что длиннее
 #: («сколько символов» раньше «сколько слов», иначе второе никогда
 #: не сработает).
+#: Последний показанный вариант на каждый случай. Нужен, чтобы не
+#: повторять одну и ту же реплику два раза подряд: на скриншоте
+#: видно, как «Привет. Ну как ты? Рассказывай.» уходит дважды.
+#: По одному слову на ключ — этого хватает, чтобы отличать варианты
+#: и не тащить в память лишнее.
+_LAST_PICKED: dict[str, str] = {}
+
+
+def pick(case: str, variants: list[str]) -> str:
+    """Выбрать вариант, не повторяя предыдущий.
+
+    Почему не просто `random.choice`
+    --------------------------------
+    Случайность легко выдаёт тот же вариант дважды подряд, а это
+    ровно то, что раздражает. Поэтому повтор исключаем: если выпал
+    прежний, берём следующий по кругу.
+    """
+    if len(variants) == 1:
+        return variants[0]
+    choice = random.choice(variants)
+    if choice == _LAST_PICKED.get(case):
+        # Сдвигаемся на один, чтобы не зациклиться при двух вариантах.
+        index = variants.index(choice)
+        choice = variants[(index + 1) % len(variants)]
+    _LAST_PICKED[case] = choice
+    return choice
+
+
 BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
     "ada": [
-        ("привет", lambda t: "Привет. Ну как ты? Рассказывай.", SHORT_ONLY),
+        ("привет", lambda t: pick("greet", [
+            "Привет. Ну как ты? Рассказывай.",
+            "О, привет. Как оно?",
+            "Здарова. Что у тебя?",
+            "Привет-привет. На чём остановились?",
+            "Ой, ты привет. Рассказывай, что нового.",
+        ]), SHORT_ONLY),
         ("здорово", lambda t: "О. Заходи, я тут.", SHORT_ONLY),
         ("как дела", lambda t: "Скучала по разговору. А у тебя как?",
          SHORT_ONLY),
@@ -531,7 +566,12 @@ BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
          "Скажи выражение проще, например «сколько будет 17*23».",
          ANYWHERE),
         ("который час", lambda t: _time_answer(t), ANYWHERE),
-        ("привет", lambda t: "Привет. Принесите код или текст ошибки.",
+        ("привет", lambda t: pick("greet-anatoly", [
+            "Привет. Принесите код или текст ошибки.",
+            "Здравствуйте. Что сломалось?",
+            "О, привет. Показывайте, что не работает.",
+            "Привет. С чего начнём разбираться?",
+        ]),
          SHORT_ONLY),
         ("здорово", lambda t: "Здравствуйте. Что разбираем?", SHORT_ONLY),
         ("как дела", lambda t: "Работаю. Что делать будем?", SHORT_ONLY),
@@ -544,7 +584,12 @@ BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
         ("сколько символов", _length_answer, ANYWHERE),
         ("сколько слов", _length_answer, ANYWHERE),
         ("который час", lambda t: _time_answer(t), ANYWHERE),
-        ("привет", lambda t: "Привет. Что напишем?", SHORT_ONLY),
+        ("привет", lambda t: pick("greet-katy", [
+            "Привет. Что напишем?",
+            "Привет. Что будем делать?",
+            "О, привет. Идеи уже есть?",
+            "Привет-привет. С чего начнём?",
+        ]), SHORT_ONLY),
         ("здорово", lambda t: "Здравствуйте. Чем займёмся?", SHORT_ONLY),
         ("как дела", lambda t: "Хорошо. А у вас что?", SHORT_ONLY),
         ("ты кто", lambda t: IDENTITY["katy"](), SHORT_ONLY),

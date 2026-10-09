@@ -39,12 +39,20 @@ def clean() -> Any:
 
     Счётчик реплик и буфер живут в модуле: без сброса тесты влияли бы
     друг на друга, и результат зависел бы от порядка запуска.
+
+    Подменять надо **и** `modelswitch.ask_model`, а не только
+    `ada.ask_model`: с перебором моделей бот пошёл не напрямую в
+    модель, а через `modelswitch.ask()`, который берёт функцию по
+    имени у `ada_bot`. Подмена одного `ada.ask_model` больше не
+    влияла на путь вызова.
     """
     ada.CHATS.clear()
     ada.OWN_ID["id"] = None
     sent: list[tuple[int, str]] = []
     ada.send = lambda token, chat, text: sent.append((chat, text))
-    ada.ask_model = lambda provider, prompt, system="": f"ОТВЕТ: {prompt[-40:]}"
+    ada.ask_model = lambda provider, prompt, system="", key="": f"ОТВЕТ: {prompt[-40:]}"
+    # Ключ и чистая память перебора — в `conftest.py`: файлов с ботами
+    # несколько, и копия в каждом разъезжалась бы.
     return sent
 
 
@@ -104,7 +112,7 @@ def test_имя_с_вопросом_сразу_получает_ответ(clean
     """
     captured: list[str] = []
 
-    def capture(provider: dict[str, Any], prompt: str, system: str = "") -> str:
+    def capture(provider: dict[str, Any], prompt: str, system: str = "", key: str = "") -> str:
         captured.append(prompt)
         return "ответ по существу"
 
@@ -134,7 +142,7 @@ def test_короткое_приветствие_отвечает_бот_сам(
     """
     captured: list[str] = []
 
-    def capture(provider: dict[str, Any], prompt: str, system: str = "") -> str:
+    def capture(provider: dict[str, Any], prompt: str, system: str = "", key: str = "") -> str:
         captured.append(prompt)
         return "ответ по существу"
 
@@ -244,7 +252,7 @@ def test_в_модель_уходит_контекст_чата(clean: list) -> 
     captured: list[str] = []
 
     def capture(provider: dict[str, Any], prompt: str,
-                system: str = "") -> str:
+                system: str = "", key: str = "") -> str:
         captured.append(prompt)
         return "ок"
 
@@ -258,7 +266,7 @@ def test_в_модель_уходит_контекст_чата(clean: list) -> 
 
 def test_контекст_не_растёт_бесконечно(clean: list) -> None:
     """Буфер ограничен: иначе запрос к модели дорожает с каждым часом."""
-    ada.ask_model = lambda provider, prompt, system="": "ок"
+    ada.ask_model = lambda provider, prompt, system="", key="": "ок"
     for number in range(1, 41):
         ada.handle(CONFIG, message(9, f"реплика {number}", private=True))
     state = ada.CHATS[9]
