@@ -56,6 +56,7 @@ try:
     import buttons as buttons_mod
     import chars as chars_mod
     import greetings
+    import memory as memory_mod
     import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
@@ -497,6 +498,10 @@ def _cmd_forget(config: dict[str, Any], state: dict[str, Any],
     """
     state["history"].clear()
     state["addressed"] = False
+    # Память на диске тоже: иначе после перезапуска бот
+    # продолжил бы «помнить» то, что человек забыл.
+    memory_mod.forget(config.get("char_key") or "ada",
+                      int(chat_id))
     return forget_text(config["face"])
 
 
@@ -684,6 +689,14 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
 
     state["history"].append((sender, text[:500]))
 
+    # Память о человеке. Своя у каждого бота: файл лежит в
+    # `память/<бота>/<чат>.json`, и Ада не видит то, что
+    # человек рассказал Анатолию.
+    char_key = config.get("char_key") or "ada"
+    memory_mod.remember(char_key, int(chat_id), text, sender)
+    memory_mod.update_summary(char_key, int(chat_id), text,
+                              sender)
+
     # Обращение по имени — самый прямой вызов. Раньше здесь отправлялась
     # заглушка «Что хотели узнать?», и на скриншоте видно, чем это
     # кончается: человек звал по имени, а получал отказ отвечать на его
@@ -738,6 +751,11 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         send(token, chat_id, "Модели не настроены на сервере.")
         return
     prompt = build_prompt(state)
+    # Что помню о человеке. Только то, что относится к его
+    # вопросу: вся память в запрос не идёт, иначе она сама
+    # станет длинным контекстом.
+    note = memory_mod.memory_note(
+        config.get("char_key") or "ada", int(chat_id), text)
     if not prompt:
         return
     try:
@@ -745,6 +763,10 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         # характера, а не чужие.
         system = chars_mod.prompt(config.get("char_key")
                                       or "ada", chat_id)
+        if note:
+            # Заметка идёт после подсказки, а не вместо неё:
+            # характер остаётся, память его дополняет.
+            system = system + "\n\n" + note
         # Через modelswitch, а не напрямую: он перебирает запасные
         # модели и ключи сам. Раньше здесь стоял прямой вызов
         # `ask_model(providers[config["active"]], ...)`, и человек

@@ -28,6 +28,7 @@ from typing import Any
 import buttons as buttons_mod
 import chars as chars_mod
 import greetings
+import memory as memory_mod
 import modelswitch
 import user_features
 
@@ -114,6 +115,9 @@ def do_action(config: dict[str, Any], state: dict[str, Any],
     if action == "forget":
         state["history"].clear()
         state["addressed"] = False
+        # Память на диске тоже: забыть разговор и забыть
+        # человека — разные вещи, но кнопка одна.
+        memory_mod.forget(char_key, chat_id)
         return user_features.forget_text(face)
 
     if action == "name":

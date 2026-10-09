@@ -369,6 +369,63 @@ def remember(char_key: str, chat_id: int,
     save_store(store)
 
 
+#: Тексты характеров из файлов, прочитанные один раз.
+#:
+#: Кэш нужен потому, что подсказка собирается на каждое сообщение,
+#: а файлы не меняются при работе бота. Без кэша три бота читали бы
+#: свои файлы двадцать раз в минуту — лишние обращения к диску на
+#: каждом запросе.
+_CHARACTER_CACHE: dict[str, str] = {}
+
+#: Какие файлы читать: `char_key` -> путь относительно папки кода.
+CHARACTER_FILES = {
+    "ada": "character/ada/Ada.txt",
+    "anatoly": "character/anatoly/anatoly_character_prompt.txt",
+}
+
+
+def character_text(char_key: str) -> str:
+    """Подробное описание персоны из файла. Пустая строка, если файла нет.
+
+    Зачем это вообще
+    ----------------
+    В папке `character/` лежали файлы на 4,6 и 2,3 КБ с подробным
+    описанием ботов: привычки, страхи, правила ответа, режимы
+    работы. Код их не читал вовсе — ни одного обращения к этой папке
+    не было во всём проекте. Из ста с лишним строк описания Ады в
+    подсказку попадали две.
+
+    Читается один раз и кэшируется: подсказка собирается на каждое
+    сообщение, а файл всё это время один и тот же.
+    """
+    if char_key in _CHARACTER_CACHE:
+        return _CHARACTER_CACHE[char_key]
+
+    relative = CHARACTER_FILES.get(char_key)
+    if not relative:
+        _CHARACTER_CACHE[char_key] = ""
+        return ""
+
+    file_path = Path(__file__).resolve().parent / relative
+    try:
+        raw = file_path.read_text(encoding="utf-8")
+    except OSError:
+        # Файла нет — не повод ронять бота: характер просто будет
+        # короче, чем задумано.
+        _CHARACTER_CACHE[char_key] = ""
+        return ""
+
+    text = raw
+    for marker in ("/character", "```text", "```"):
+        text = text.replace(marker, "")
+    text = text.strip()
+    # Две пустые строки подряд из вырезанных кусков — лишнее.
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    _CHARACTER_CACHE[char_key] = text
+    return text
+
+
 def prompt(char_key: str, chat_id: int,
            store: dict[str, Any] | None = None) -> str:
     """Подсказка для модели: характер плюс текущие признаки.
@@ -437,6 +494,13 @@ def prompt(char_key: str, chat_id: int,
 
     if char.get("trailing"):
         parts.append(char["trailing"])
+    # Подробный характер из файла. Он не заменяет то, что собрано
+    # выше, а дополняет: в файле привычки и правила ответа, которых
+    # нет в коде и которые и делают бота живым.
+    extra = character_text(char_key)
+    if extra:
+        parts.append(extra)
+
     return "\n\n".join(parts)
 
 
