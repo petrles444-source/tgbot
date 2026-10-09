@@ -1,0 +1,13 @@
+{
+  "_что-это": "Настройки, из которых боты читают модель. Токены сюда не кладутся: они приходят из переменных окружения.",
+  "active": 0,
+  "persona_key": "ada",
+  "providers": [
+    {
+      "name": "groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key": "GROQ_API_KEY",
+      "model": "llama-3.1-8b-instant"
+    }
+  ]
+}

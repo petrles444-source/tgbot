@@ -1,0 +1,43 @@
+# Без CRLF-переводов на сервере
+#
+# Зачем это
+# ----------
+# На сервере `запустить.sh` исполняет bash. Если в файле останутся
+# Windows-переводы строк (CRLF), bash споткнётся на невидимом `\r`:
+# команда будет называться `запустить.sh\r`, и появится ошибка
+# `command not found`, хотя скрипт выглядит рабочим.
+#
+# Порядок важен
+# -------------
+# `text=auto` НЕ подходит: он нормализует всё в LF на момент
+# добавления, но потом `core.autocrlf=true` снова превращает файлы в
+# рабочей копии в CRLF при следующем же чек-ауте, и на сервер уедет
+# CRLF. Поэтому для скриптов и текстовых файлов autocrlf выключен
+# принудительно, а `eol=lf` говорит git Checkout-у оставлять LF.
+#
+# На Windows при этом ничего не ломается: Python, git и редакторы
+# читают оба формата одинаково.
+* text=auto eol=lf
+
+# Настоящие бинарные файлы: git не должен пробовать их «чинить».
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.webp binary
+
+# Скрипты и тексты — строго LF, независимо от настроек Windows.
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

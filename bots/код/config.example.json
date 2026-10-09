@@ -1,0 +1,36 @@
+{
+  "_comment": "Схема настроек бота. Настоящий config.json создаётся на сервере из этого файла и лежит там же; в репозиторий не попадает. Ключи провайдеров — только в этом файле на сервере.",
+  "telegram_token": "",
+  "active": 0,
+  "system": "Ты — помощник. Отвечай коротко и по делу, по-русски.",
+  "providers": [
+    {
+      "name": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "anthropic/claude-3.5-haiku",
+      "api_key": "",
+      "_hint": "Ключ: https://openrouter.ai/keys — пополнение бесплатных моделей не требуется, есть бесплатный tiers."
+    },
+    {
+      "name": "groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "llama-3.3-70b-versatile",
+      "api_key": "",
+      "_hint": "Ключ: https://console.groq.com/keys — есть щедрый бесплатный лимит."
+    },
+    {
+      "name": "mistralai",
+      "base_url": "https://api.mistral.ai/v1",
+      "model": "mistral-small-latest",
+      "api_key": "",
+      "_hint": "Ключ: https://console.mistral.ai/api-keys — пробный ключ выдают сразу."
+    },
+    {
+      "name": "nvidia",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "model": "meta/llama-3.3-70b-instruct",
+      "api_key": "",
+      "_hint": "Ключ: https://build.nvidia.com — бесплатно, нужен только аккаунт."
+    }
+  ]
+}
