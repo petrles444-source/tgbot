@@ -52,7 +52,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    import button_actions as btn_mod
+    import buttons as buttons_mod
     import chars as chars_mod
+    import greetings
     import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
@@ -62,7 +65,10 @@ try:
                                status_lines)
 except ImportError:  # pragma: no cover - прямой запуск из другой папки
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import button_actions as btn_mod
+    import buttons as buttons_mod
     import chars as chars_mod
+    import greetings
     import modelswitch as modelswitch_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
@@ -328,6 +334,28 @@ def send(token: str, chat_id: int | str, text: str) -> None:
         print(f"не отправилось: {exc}", flush=True)
 
 
+def send_buttons(token: str, chat_id: int | str, text: str,
+                 actions: dict[str, Any] | None = None) -> None:
+    """Отправить текст с кнопками под ним.
+
+    Отдельная функция, а не параметр у `send`, потому что
+    `reply_markup` Telegram не принимает вместе с текстом длиннее
+    200 символов вместе с кнопками — точнее, отказывается
+    «BOT_DATA_INVALID» на длинном тексте. Проверка дешёвая: если
+    текст не влез, отправляем без кнопок, а не теряем сообщение.
+    """
+    markup = actions if actions is not None else buttons_mod.main_menu()
+    body = text[:MAX_ANSWER_CHARS]
+    try:
+        telegram(token, "sendMessage", chat_id=chat_id, text=body,
+                 disable_web_page_preview="true",
+                 reply_markup=json.dumps(markup, ensure_ascii=False))
+        return
+    except Exception as exc:
+        print(f"с кнопками не вышло ({exc}), шлю просто текст", flush=True)
+    send(token, chat_id, body)
+
+
 # ------------------------------------------------------------- модель
 
 
@@ -557,14 +585,31 @@ def _claim_for_answer(chat_id: int, message_id: int) -> bool:
 
 
 def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
-    """Одно входящее сообщение."""
-    chat = message.get("chat") or {}
+    """Одно входящее сообщение или нажатие кнопки.
+
+    Раньше требовался непустой `text`, и нажатие кнопки отсевалось
+    на входе: в `callback_query` текста нет, есть только `data`.
+    Из-за этого кнопки, даже если бы они появились, не работали бы
+    никогда — а проверить это было нечем, потому что отправки с
+    кнопками в проекте не было.
+    """
+    chat = (message.get("chat") or {})
     chat_id = chat.get("id")
+    callback = message.get("callback_query")
     text = str(message.get("text") or "").strip()
-    if chat_id is None or not text:
+
+    # Нажатие кнопки: чат лежит внутри callback_query.
+    if callback:
+        inner = callback.get("message") or {}
+        chat = inner.get("chat") or chat
+        chat_id = chat.get("id")
+
+    if chat_id is None:
         return
     # Чужие боты и собственные реплики: иначе Ада отвечает сама себе.
     if (message.get("from") or {}).get("is_bot"):
+        return
+    if not text and not callback:
         return
     sender = (message.get("from") or {}).get("first_name") or "участник"
     is_private = str(chat.get("type") or "") == "private"
@@ -586,10 +631,40 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
     # Команды разбираются до записи в историю. Если писать раньше,
     # то через десять вызовов модель получает переписку из «/help»
     # и «/status» и начинает отвечать на список команд.
+    # Нажатие кнопки. Разбираем до всего остального: у нажатия нет
+    # текста, и если не обработать его здесь, оно ушло бы в модель
+    # пустой строкой.
+    if callback:
+        _answer_callback(token, str(callback.get("id") or ""))
+        action = buttons_mod.action_of(callback)
+        if not action:
+            return
+        answer = _do_action(config, state, chat_id, action)
+        if answer:
+            send_buttons(token, chat_id, answer)
+        return
+
     command = text.split()[0].lower().split("@")[0]
     # Команды разбираются ДО записи в историю. Если писать раньше, то
     # через десять вызовов модель получает переписку из «/help» и
     # «/status» и начинает отвечать на список команд.
+    # `/start` показывает меню кнопками: человек описал именно
+    # такой способ управления. Текст тот же, что и раньше, но
+    # снизу появляются кнопки.
+    if command == "/start":
+        send_buttons(token, chat_id, _start_text(config))
+        return
+
+    # Цифра без слэша — тоже команда: человек написал руками то,
+    # что обычно жмёт кнопкой. Оба пути ведут в одно место, иначе
+    # кнопки и текст разъедутся при правке.
+    typed, arg = buttons_mod.parse(text)
+    if typed in BUTTON_ACTIONS:
+        answer = _do_action(config, state, chat_id, typed, arg)
+        if answer:
+            send(token, chat_id, answer)
+        return
+
     if command in COMMANDS:
         answer = COMMANDS[command](config, state, chat_id)
         if answer:
@@ -741,6 +816,14 @@ def set_avatar(config: dict[str, Any]) -> bool:
         return False
 
 
+#: Короткие обёртки для кнопок. Логика живёт в `button_actions`,
+#: а здесь только имена, которыми пользуется `handle`.
+_answer_callback = btn_mod.answer_callback
+_start_text = btn_mod.start_text
+_do_action = btn_mod.do_action
+BUTTON_ACTIONS = btn_mod.BUTTON_ACTIONS
+
+
 def main(config: dict[str, Any] | None = None) -> None:
     """Опрос Telegram до бесконечности.
 
@@ -764,6 +847,7 @@ def main(config: dict[str, Any] | None = None) -> None:
         telegram(config["token"], "deleteWebhook",
                  drop_pending_updates="false")
         me = telegram(config["token"], "getMe")
+        config["username"] = me.get("username")
         OWN_ID["id"] = me.get("id")
         print(f"запущена как {config['face']['name']}: "
               f"@{me.get('username')} (id {me.get('id')}), "

@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import random
+import greetings
 import re
 import time
 from pathlib import Path
@@ -441,6 +442,21 @@ def prompt(char_key: str, chat_id: int,
 
 # -------------------------------------------------- разговор без модели
 
+#: Слова вместо знаков: «посчитай 17 умножить на 23».
+#:
+#: Раньше арифметика понимала только знаки, и на «посчитай 17
+#: умножить на 23» бот отвечал «напиши выражение проще». Люди пишут
+#: словами чаще, чем знаками, поэтому это был самый частый отказ.
+#:
+#: Порядок важен: двухсловные варианты стоят раньше, иначе «умножить»
+#: съел бы кусок выражения и осталось «17 * на 23».
+_SPOKEN_OPS = (
+    ("умножить на", "*"), ("умножь на", "*"), ("помножить на", "*"),
+    ("разделить на", "/"), ("раздели на", "/"), ("делить на", "/"),
+    ("в степени", "**"), ("плюс", "+"), ("минус", "-"),
+    ("прибавить", "+"), ("отнять", "-"), ("умножить", "*"),
+)
+
 def _math_answer(text: str) -> str | None:
     """Посчитать выражение. Считает кодом, а не моделью.
 
@@ -448,18 +464,50 @@ def _math_answer(text: str) -> str | None:
     вероятностью опечатки, а `eval` в ограниченном окружении —
     нет. Поэтому арифметика обрабатывается до обращения к модели.
     """
-    allowed = set("0123456789+-*/().  ")
-    expr = text.strip().strip("посчитайПосчитайЧто сколько =:? ")
-    expr = re.sub(r"\s", "", expr)
+
+    # Слова вместо знаков: «посчитай 17 умножить на 23» должно
+    # считаться так же, как «посчитай 17*23».
+    #
+    # Подставляются **все** слова подряд, а не только первое: в
+    # выражении их может быть несколько («17 плюс 5 умножить на 2»),
+    # и обрыв после первой замены ломал расчёт.
+    lowered = text.lower()
+    for word, sign in _SPOKEN_OPS:
+        if word in lowered:
+            text = re.sub(re.escape(word), sign, text, flags=re.I)
+            lowered = text.lower()
+
+    # Обвязка фразы убирается после подстановки: «сколько будет»
+    # превратилось бы в знак, а должно просто исчезнуть.
+    low_text = text.lower()
+    for word in (    "сколько будет",
+    "что будет",
+    "что получится",
+    "посчитайте",
+    "посчитай",
+    "посчитаем",
+    "вычисли",
+    "вычислите",
+    "сколько",
+    "равно",
+    "что равно",
+    "будет",
+    "пожалуйста",):
+        if word in low_text:
+            text = re.sub(re.escape(word), " ", text, flags=re.I)
+
+    expr = re.sub(r"\s", "", text)
     if not expr or len(expr) > 60:
         return None
+    allowed = set("0123456789+-*/().")
     if not set(expr) <= allowed:
         return None
     if not any(ch.isdigit() for ch in expr):
         return None
-    #: `eval` с пустым пространством имён: внутри доступны только
-    #: арифметические операции, никаких имён и вызовов. Плюс проверка
-    #: символов выше — вместе это отсекает всё, кроме калькулятора.
+
+    # `eval` с пустым пространством имён: внутри доступны только
+    # арифметические операции, никаких имён и вызовов. Плюс проверка
+    # символов выше — вместе это отсекает всё, кроме калькулятора.
     try:
         value = eval(expr, {"__builtins__": {}}, {})  # noqa: S307
     except Exception:
@@ -508,94 +556,69 @@ ANYWHERE = False
 #: Порядок важен: сперва то, что человек просит чаще и что длиннее
 #: («сколько символов» раньше «сколько слов», иначе второе никогда
 #: не сработает).
-#: Последний показанный вариант на каждый случай. Нужен, чтобы не
-#: повторять одну и ту же реплику два раза подряд: на скриншоте
-#: видно, как «Привет. Ну как ты? Рассказывай.» уходит дважды.
-#: По одному слову на ключ — этого хватает, чтобы отличать варианты
-#: и не тащить в память лишнее.
-_LAST_PICKED: dict[str, str] = {}
 
-
-def pick(case: str, variants: list[str]) -> str:
-    """Выбрать вариант, не повторяя предыдущий.
-
-    Почему не просто `random.choice`
-    --------------------------------
-    Случайность легко выдаёт тот же вариант дважды подряд, а это
-    ровно то, что раздражает. Поэтому повтор исключаем: если выпал
-    прежний, берём следующий по кругу.
-    """
-    if len(variants) == 1:
-        return variants[0]
-    choice = random.choice(variants)
-    if choice == _LAST_PICKED.get(case):
-        # Сдвигаемся на один, чтобы не зациклиться при двух вариантах.
-        index = variants.index(choice)
-        choice = variants[(index + 1) % len(variants)]
-    _LAST_PICKED[case] = choice
-    return choice
 
 
 BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
     "ada": [
-        ("привет", lambda t: pick("greet", [
-            "Привет. Ну как ты? Рассказывай.",
-            "О, привет. Как оно?",
-            "Здарова. Что у тебя?",
-            "Привет-привет. На чём остановились?",
-            "Ой, ты привет. Рассказывай, что нового.",
-        ]), SHORT_ONLY),
-        ("здорово", lambda t: "О. Заходи, я тут.", SHORT_ONLY),
-        ("как дела", lambda t: "Скучала по разговору. А у тебя как?",
+        ("сколько символов", _length_answer, ANYWHERE),
+        ("сколько слов", _length_answer, ANYWHERE),
+        ("посчитай", lambda t, ck: _math_answer(t) or
+         "Скажи выражение проще, например «посчитай 17*23».", ANYWHERE),
+        ("сколько будет", lambda t, ck: _math_answer(t) or
+         "Скажи выражение проще, например «сколько будет 17*23».",
+         ANYWHERE),
+        ("который час", lambda t, ck: _time_answer(t), ANYWHERE),
+        ("привет", lambda t, ck: greetings.pick(ck), SHORT_ONLY),
+        ("здорово", lambda t, _t_key: "О. Заходи, я тут.", SHORT_ONLY),
+        ("как дела", lambda t, _t_key: "Скучала по разговору. А у тебя как?",
          SHORT_ONLY),
-        ("как ты", lambda t: "Нормально. Ты лучше скажи, как сам.",
+        ("как ты", lambda t, _t_key: "Нормально. Ты лучше скажи, как сам.",
          SHORT_ONLY),
-        ("ты кто", lambda t: IDENTITY["ada"](), SHORT_ONLY),
-        ("кто ты", lambda t: IDENTITY["ada"](), SHORT_ONLY),
-        ("ты бот", lambda t: IDENTITY["ada"](), SHORT_ONLY),
-        ("что умеешь", lambda t: CAPABILITIES["ada"](), SHORT_ONLY),
-        ("ты красивая", lambda t: "Ой. Ну вот, с чего начать.", SHORT_ONLY),
-        ("ты милая", lambda t: "Спасибо. Ну что, ещё что-нибудь?", SHORT_ONLY),
+        ("ты кто", lambda t, _t_key: IDENTITY["ada"](), SHORT_ONLY),
+        ("кто ты", lambda t, _t_key: IDENTITY["ada"](), SHORT_ONLY),
+        ("ты бот", lambda t, _t_key: IDENTITY["ada"](), SHORT_ONLY),
+        ("что умеешь", lambda t, _t_key: CAPABILITIES["ada"](), SHORT_ONLY),
+        ("ты красивая", lambda t, _t_key: "Ой. Ну вот, с чего начать.", SHORT_ONLY),
+        ("ты милая", lambda t, _t_key: "Спасибо. Ну что, ещё что-нибудь?", SHORT_ONLY),
     ],
     "anatoly": [
         ("сколько символов", _length_answer, ANYWHERE),
         ("сколько слов", _length_answer, ANYWHERE),
-        ("посчитай", lambda t: _math_answer(t) or
+        ("посчитай", lambda t, _t_key: _math_answer(t) or
          "Скажи выражение проще, например «посчитай 17*23».", ANYWHERE),
-        ("сколько будет", lambda t: _math_answer(t) or
+        ("сколько будет", lambda t, _t_key: _math_answer(t) or
          "Скажи выражение проще, например «сколько будет 17*23».",
          ANYWHERE),
-        ("который час", lambda t: _time_answer(t), ANYWHERE),
-        ("привет", lambda t: pick("greet-anatoly", [
-            "Привет. Принесите код или текст ошибки.",
-            "Здравствуйте. Что сломалось?",
-            "О, привет. Показывайте, что не работает.",
-            "Привет. С чего начнём разбираться?",
-        ]),
-         SHORT_ONLY),
-        ("здорово", lambda t: "Здравствуйте. Что разбираем?", SHORT_ONLY),
-        ("как дела", lambda t: "Работаю. Что делать будем?", SHORT_ONLY),
-        ("ты кто", lambda t: IDENTITY["anatoly"](), SHORT_ONLY),
-        ("кто ты", lambda t: IDENTITY["anatoly"](), SHORT_ONLY),
-        ("ты бот", lambda t: IDENTITY["anatoly"](), SHORT_ONLY),
-        ("что умеешь", lambda t: CAPABILITIES["anatoly"](), SHORT_ONLY),
+        ("который час", lambda t, _t_key: _time_answer(t), ANYWHERE),
+        ("привет", lambda t, ck: greetings.pick(ck), SHORT_ONLY),
+        ("здорово", lambda t, _t_key: "Здравствуйте. Чем займёмся?", SHORT_ONLY),
+        ("как дела", lambda t, _t_key: "Хорошо. А у вас что?", SHORT_ONLY),
+        ("ты кто", lambda t, _t_key: IDENTITY["anatoly"](), SHORT_ONLY),
+        ("кто ты", lambda t, _t_key: IDENTITY["anatoly"](), SHORT_ONLY),
+        ("ты бот", lambda t, _t_key: IDENTITY["anatoly"](), SHORT_ONLY),
+        ("что умеешь", lambda t, _t_key: CAPABILITIES["anatoly"](), SHORT_ONLY),
     ],
     "katy": [
         ("сколько символов", _length_answer, ANYWHERE),
         ("сколько слов", _length_answer, ANYWHERE),
-        ("который час", lambda t: _time_answer(t), ANYWHERE),
-        ("привет", lambda t: pick("greet-katy", [
-            "Привет. Что напишем?",
-            "Привет. Что будем делать?",
-            "О, привет. Идеи уже есть?",
-            "Привет-привет. С чего начнём?",
-        ]), SHORT_ONLY),
-        ("здорово", lambda t: "Здравствуйте. Чем займёмся?", SHORT_ONLY),
-        ("как дела", lambda t: "Хорошо. А у вас что?", SHORT_ONLY),
-        ("ты кто", lambda t: IDENTITY["katy"](), SHORT_ONLY),
-        ("кто ты", lambda t: IDENTITY["katy"](), SHORT_ONLY),
-        ("ты бот", lambda t: IDENTITY["katy"](), SHORT_ONLY),
-        ("что умеешь", lambda t: CAPABILITIES["katy"](), SHORT_ONLY),
+        ("посчитай", lambda t, ck: _math_answer(t) or
+         "Скажи выражение проще, например «посчитай 17*23».", ANYWHERE),
+        ("сколько будет", lambda t, ck: _math_answer(t) or
+         "Скажи выражение проще, например «сколько будет 17*23».",
+         ANYWHERE),
+        ("который час", lambda t, ck: _time_answer(t), ANYWHERE),
+        ("привет", lambda t, ck: greetings.pick(ck), SHORT_ONLY),
+        ("здорово", lambda t, ck: "Здравствуй. Что будем делать?",
+         SHORT_ONLY),
+        ("как дела", lambda t, ck: "Отлично. Ты как?",
+         SHORT_ONLY),
+        ("как ты", lambda t, ck: "Нормально. Ты лучше скажи, как сам.",
+         SHORT_ONLY),
+        ("ты кто", lambda t, ck: IDENTITY["katy"](), SHORT_ONLY),
+        ("кто ты", lambda t, ck: IDENTITY["katy"](), SHORT_ONLY),
+        ("ты бот", lambda t, ck: IDENTITY["katy"](), SHORT_ONLY),
+        ("что умеешь", lambda t, ck: CAPABILITIES["katy"](), SHORT_ONLY),
     ],
 }
 
@@ -603,7 +626,7 @@ BUILTIN: dict[str, list[tuple[str, Callable[[str], str | None], bool]]] = {
 #: Подобрана на глаз по живому общению: «привет, как дела» — это всё
 #: ещё приветствие, а «привет, ада, слушай, у меня тут вопрос по
 #: архитектуре» — уже разговор, и его надо вести модели.
-SHORT_LIMIT = 28
+SHORT_LIMIT = 44
 
 
 def builtin_answer(char_key: str, text: str) -> str | None:
@@ -628,14 +651,14 @@ def builtin_answer(char_key: str, text: str) -> str | None:
     # время, длина текста.
     for probe, handler, anywhere in BUILTIN.get(char_key, []):
         if anywhere and probe in low:
-            return handler(text)
+            return handler(text, char_key)
 
     # Приветствия и «кто ты» — только когда фраза короткая.
     for probe, handler, anywhere in BUILTIN.get(char_key, []):
         if anywhere or not is_short:
             continue
         if probe in low:
-            return handler(text)
+            return handler(text, char_key)
     return None
 
 

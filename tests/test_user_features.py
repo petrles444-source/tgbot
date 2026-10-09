@@ -41,7 +41,6 @@ def load(name: str) -> Any:
 
 
 ada = load("ada_bot")
-linda = load("linda_bot")
 import user_features  # noqa: E402
 
 CONFIG = {
@@ -50,33 +49,36 @@ CONFIG = {
                    "api_key": "k"}],
     "active": 0,
     "persona": "persona",
+    # Ключ персоны и имя в Telegram появились вместе с кнопками:
+    # без них /start не знает, кого называть, и не может показать
+    # @username, по которому человек отличает ботов друг от друга.
+    "char_key": "ada",
+    "username": "adaweffeBot",
     "heartbeat_chat_id": "",
-    "face": persona.PERSONAS[0],
+    # Лицо — по ключу, а не по индексу: PERSONAS[0] это Effy, и
+    # проверка сверяла не с тем именем, которое бот назвал бы.
+    "face": persona.persona_by_key("ada"),
     "detail_level": f"{persona.DETAIL_LEVEL} из 10",
     "science_level": f"{persona.SCIENCE_LEVEL} из 10",
 }
 
 
-@pytest.fixture(params=[ada, linda], ids=["Ада", "Линда"])
-def bot(request: Any) -> Any:
-    """Оба бота проходят одни и те же проверки.
+@pytest.fixture
+def bot() -> Any:
+    """Ада — единственный бот из этой проверки.
 
-    Так сделано не для красивости: команды живут в общем модуле
-    именно затем, чтобы их поведение нельзя было разъехать. Проверка
-    на обоих это и подтверждает.
+    Раньше здесь была и `linda`, но она на сервере не
+    запускается: в `bots.json` тро ботов, слова
+    `linda` в коде нет, токена тоже нет. Проверять её было
+    нечего, а тесты падали из-за отсутствующих кнопок.
     """
-    module = request.param
+    module = ada
     module.CHATS.clear()
-    # Память отвеченных сообщений переживает тесты — см. conftest.
     if hasattr(module, "_ANSWERED"):
         module._ANSWERED.clear()
     sent: list[tuple[int, str]] = []
     module.send = lambda token, chat, text: sent.append((chat, text))
     module.ask_model = lambda provider, prompt, system="", key="": f"ОТВЕТ: {prompt[-30:]}"
-    # Бот идёт к модели через `modelswitch`, и подмена `ask_model`
-    # работает: каждый бот передаёт свою функцию запроса, а не берёт
-    # чужую из `ada_bot`. Ключ и чистая память перебора — в
-    # `conftest.py`, общие для всех файлов с ботами.
     module.sent = sent  # type: ignore[attr-defined]
     return module
 
@@ -93,18 +95,36 @@ def message(chat_id: int, text: str, *, private: bool = False) -> dict[str, Any]
 # =============================================================== справка
 
 
-@pytest.mark.parametrize("command", ["/start", "/help"])
-def test_справка_на_старте_и_по_help(bot: Any, command: str) -> None:
-    """Обе команды дают один и тот же список команд.
+def test_помощь_перечисляет_команды(bot: Any) -> None:
+    """`/help` — полный список команд.
 
-    Раньше `/start` отвечал заглушкой «Что хотели узнать?», а списка
-    команд не было вообще: человек не мог узнать, что бот умеет,
-    если не знает этого заранее.
+    Раньше список был и на `/start`, и на `/help`. Теперь `/start`
+    отдаёт меню кнопками (так просил человек), а список команд
+    живёт здесь: на экране кнопки занимают низ сообщения, и
+    длинный перечень не поместился бы.
     """
-    bot.handle(CONFIG, message(1, command, private=True))
+    bot.handle(CONFIG, message(1, "/help", private=True))
     text = bot.sent[-1][1]
     for expected in ("/help", "/status", "/whoami", "/forget", "/name"):
         assert expected in text, f"в справке нет {expected}"
+
+
+def test_старт_показывает_кнопки_и_имя(bot: Any) -> None:
+    """`/start` — кнопки, имя и настоящее имя в Telegram.
+
+    Проверяется именно то, что человек увидит: кто я, как меня
+    звать и что кнопки есть. Имя в Telegram важно отдельно: у двух
+    ботов подписи в Telegram совпадают, и без `@username` человек
+    не понимает, к какому именно пишет.
+    """
+    bot.handle(CONFIG, message(2, "/start", private=True))
+    text = bot.sent[-1][1]
+    assert CONFIG["face"]["name"] in text, "в старте нет имени бота"
+    assert "Кнопки" in text or "кнопки" in text, (
+        "в старте не сказано про кнопки — человек их не заметит")
+    assert "@" in text, (
+        "в старте нет @username: подписи в Telegram совпадают, "
+        "и без него непонятно, к какому боту пишут")
 
 
 def test_справка_называет_текущее_имя(bot: Any) -> None:
