@@ -57,7 +57,10 @@ try:
     import chars as chars_mod
     import greetings
     import memory as memory_mod
+    import knowledge as knowledge_mod
     import modelswitch as modelswitch_mod
+    import fallback as fallback_mod
+    import gender as gender_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -429,6 +432,25 @@ def uptime() -> str:
     return f"{secs} с"
 
 
+def knowledge_enabled(config: dict[str, Any]) -> bool:
+    """Включена ли база знаний. По умолчанию — да.
+
+    Выключается одним ключом в `config.json`:
+    `"knowledge": {"enabled": false}`. Если ключа нет, база работает:
+    отсутствие настройки не должно означать, что бот молчит.
+
+    Отдельная функция, а не проверка на месте, потому что выключатель
+    нужен ещё в проверках, и там важно одно и то же правило, а не
+    два похожих условия, которые разъедутся со временем.
+    """
+    настройки = config.get("knowledge")
+    if isinstance(настройки, dict):
+        return bool(настройки.get("enabled", True))
+    # Буквально `true` в настройках — тоже «включено». Всё остальное
+    # (в том числе отсутствие) — да, чтобы база работала сразу.
+    return настройки is not False
+
+
 def status_text(config: dict[str, Any]) -> str:
     """Сводка о боте и о том, как с ним общаться."""
     lines = status_lines(config, uptime(), len(CHATS))
@@ -756,6 +778,20 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
     # станет длинным контекстом.
     note = memory_mod.memory_note(
         config.get("char_key") or "ada", int(chat_id), text)
+    # Что из файлов. Отдельной строкой от памяти: память —
+    # это что бот знает о человеке, а база — что он знает
+    # вообще. В модель уходит только то, что относится к
+    # вопросу, и поиск идёт словами, а не запросом к модели.
+    #
+    # Выключатель в `config.json`: поиск стоит 0,3 мс, но сама
+    # заметка увеличивает запрос, а модель читает всё присланное.
+    # На медленной модели это видно, поэтому если покажется, что
+    # ответ идёт слишком долго, достаточно поставить
+    # `knowledge.enabled = false`, не трогая код.
+    fact_note = ""
+    if knowledge_enabled(config):
+        fact_note = knowledge_mod.заметка_знаний(
+            config.get("char_key") or "ada", int(chat_id), text)
     if not prompt:
         return
     try:
@@ -767,6 +803,12 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
             # Заметка идёт после подсказки, а не вместо неё:
             # характер остаётся, память его дополняет.
             system = system + "\n\n" + note
+        if fact_note:
+            # Файлы точнее того, что модель помнит с
+            # обучения: про этот проект она не знает ничего
+            # и уверенно выдумывает. Здесь сказано, что за
+            # этими строками стоит.
+            system = system + "\n\n" + fact_note
         # Через modelswitch, а не напрямую: он перебирает запасные
         # модели и ключи сам. Раньше здесь стоял прямой вызов
         # `ask_model(providers[config["active"]], ...)`, и человек
@@ -779,7 +821,29 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         # получал бы простыню.
         chars_mod.consume_one_shot(config.get("char_key") or "ada", chat_id)
     except Exception:
-        answer = "Сейчас не получается ответить, попробуй через минуту."
+        # Человечный отказ вместо служебного: со своим голосом
+        # и в правильном роде. Тексты — в `fallback`.
+        answer = fallback_mod.отказ(config.get("char_key") or "ada")
+
+    # `modelswitch.ask` при неудаче возвращает не текст, а короткую
+    # метку причины: «молчала», «нет ключа», «техническая ошибка».
+    # Без этой проверки в чат уехало бы слово «молчала» — раньше
+    # здесь стояло `if answer:` и метка проходила как ответ.
+    if answer:
+        answer = fallback_mod.жалоба(config.get("char_key") or "ada",
+                                      answer)
+    if answer:
+        # Третий рубеж защиты пола. Первые два — в подсказке: правило
+        # в начале и правило в конце. Они работают в 999 случаях из
+        # тысячи, но модель — статистика, и примерно раз на тысячу
+        # ответов она протаскивает «я сделал». Здесь это чинится
+        # перед отправкой, когда человек уже не может увидеть
+        # промежуточный текст и обидеться на него.
+        #
+        # Правка только про «я»: слова «ты» и «вы» относятся к
+        # собеседнику, и их пол здесь не наш.
+        answer, _правок = gender_mod.поправить_род(
+            answer, config.get("char_key") or "ada")
     if answer:
         send(token, chat_id, answer)
 
