@@ -61,6 +61,7 @@ try:
     import modelswitch as modelswitch_mod
     import fallback as fallback_mod
     import gender as gender_mod
+    import liveliness as liveliness_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -74,6 +75,13 @@ except ImportError:  # pragma: no cover - прямой запуск из дру�
     import chars as chars_mod
     import greetings
     import modelswitch as modelswitch_mod
+    # Эти три в «нормальной» ветке импортируются выше. Раньше в запасной
+    # ветке они отсутствовали, и при любом сбое первого импорта бот
+    # падал позже с NameError на `fallback_mod`, вместо того чтобы
+    # просто не найти модуль.
+    import fallback as fallback_mod
+    import gender as gender_mod
+    import liveliness as liveliness_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -205,7 +213,14 @@ def chat_state(chat_id: int) -> dict[str, Any]:
     state = CHATS.get(chat_id)
     if state is None:
         state = {"count": 0, "addressed": False, "beat": 0.0,
-                 "history": deque(maxlen=CONTEXT_MESSAGES)}
+                 "history": deque(maxlen=CONTEXT_MESSAGES),
+                 # Живость: сколько бот говорит сам, сколько зовёт модель.
+                 # По умолчанию 50 — наполовину. Человек поднимает её
+                 # сам словами («активнее») и опускает («не спамь»).
+                 "живость": liveliness_mod.получить(None),
+                 # Ответы самого бота, чтобы не повторяться. Отдельно от
+                 # `history`: там реплики человека, а тут — наши.
+                 "свои_ответы": []}
         CHATS[chat_id] = state
     return state
 
@@ -365,7 +380,8 @@ def send_buttons(token: str, chat_id: int | str, text: str,
 
 
 def ask_model(provider: dict[str, Any], prompt: str,
-              system: str = "", key: str = "") -> str:
+              system: str = "", key: str = "", низ: str = "",
+              temperature: float | None = None) -> str:
     """Спросить модель через адрес, совместимый с OpenAI.
 
     Такой адрес у openrouter, groq, mistralai, nvidia, z_ai: одна форма
@@ -377,6 +393,25 @@ def ask_model(provider: dict[str, Any], prompt: str,
     «GROQ_API_KEY» вместо настоящего ключа и провайдер отвечал 403.
     Теперь ключ подставляет `modelswitch`: он же умеет чередовать
     несколько ключей одного провайдера.
+
+    НИЖНИЙ ПРОМТ — «БУТЕРБРОД»
+
+        Параметр `низ` добавляет правило ПОСЛЕ сообщения человека, а не
+        до. Раньше характер задавался только сверху, и модель к концу
+        ответа о нём забывала: начинала одинаково, отвечала вопросом и
+        путала пол. Модель помнит лучше то, что читает последним,
+        поэтому характер дублируется снизу — темой, запретом повторов
+        и требованием закончить ответом.
+
+        Порядок: верхний характер → сообщение человека → нижние правила.
+        Пустые части пропускаются: лишний пустой system у части
+        провайдеров ломает подсчёт токенов.
+
+    TEMPERATURE
+
+        Параметр нужен для борьбы с повторами: когда модель выдала
+        текст, который человек уже видел, следующая попытка идёт с
+        более высокой температурой. Разнообразие вместо повтора.
     """
     base = str(provider.get("base_url") or "").rstrip("/")
     if not base:
@@ -385,9 +420,12 @@ def ask_model(provider: dict[str, Any], prompt: str,
         raise RuntimeError(
             f"у провайдера «{provider.get('name', '?')}» нет ключа")
     messages: list[dict[str, str]] = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    if system and system.strip():
+        messages.append({"role": "system", "content": system.strip()})
+    if prompt and prompt.strip():
+        messages.append({"role": "user", "content": prompt.strip()})
+    if низ and низ.strip():
+        messages.append({"role": "system", "content": низ.strip()})
 
     payload = json.dumps({
         "model": provider.get("model") or "",
@@ -395,7 +433,7 @@ def ask_model(provider: dict[str, Any], prompt: str,
         # Короткий ответ: на бесплатном тарифе это ещё и экономит квоту,
         # а Аде положено отвечать одной-двумя фразами.
         "max_tokens": 400,
-        "temperature": 0.6,
+        "temperature": 0.6 if temperature is None else float(temperature),
     }).encode("utf-8")
     request = urllib.request.Request(
         f"{base}/chat/completions", data=payload,
@@ -699,6 +737,36 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
             send(token, chat_id, answer)
         return
 
+    # ЖИВОСТЬ СЛОВАМИ: «активнее», «не спамь», «по делу»
+    #
+    # Человек не обязан знать про шкалу 0–100. Он говорит обычными
+    # словами, а бот сам понимает, в какую сторону двигаться. Проверка
+    # стоит ДО записи в историю и до вызова модели: иначе «активнее»
+    # ушло бы в модель, она бы переспросила «в смысле», и человек
+    # решил бы, что его не поняли.
+    # Имя бота сюда намеренно не передаётся: раньше стояла заглушка «а»,
+    # и слово «активнее» начиналось ровно с этой буквы — она съедалась
+    # как обращение, и команда не распознавалась вовсе. Команды ловятся
+    # и без обращения, поэтому пустое имя тут правильно.
+    движение = liveliness_mod.разобрать_команду(text, "")
+    if движение:
+        _направление, дельта = движение
+        было = liveliness_mod.получить(state)
+        стало, обрезалось = liveliness_mod.сдвинуть(state, дельта)
+        if обрезалось:
+            # Нажали в потолок или в пол: говорим честно, иначе
+            # человек решит, что кнопка не работает.
+            потолок = "Больше некуда — уже на пределе." if стало == 100 \
+                else "Уже самый низ, ниже не будет."
+            send(token, chat_id,
+                 f"Живость {стало} из 100. {потолок}")
+        else:
+            куда = "больше болтовни" if дельта > 0 else "больше настоящих ответов"
+            send(token, chat_id,
+                 f"Живость {стало} из 100 — теперь {куда}. "
+                 f"Было {было}. Попроси ещё раз, если не то.")
+        return
+
     # Выбор модели — тоже команда человека, а не вопрос к модели:
     # спрашивать нейросеть о том, какую модель включить, бессмысленно,
     # модель о своих настройках не знает.
@@ -814,8 +882,34 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         # `ask_model(providers[config["active"]], ...)`, и человек
         # в чате видел «Не получилось ответить: провайдер ответил
         # HTTP 403» вместо ответа.
-        answer = modelswitch_mod.ask(config, prompt, system,
-                                     asker=ask_model)
+        # ЖИВОСТЬ РЕШАЕТ, ЗОВАТЬ ЛИ МОДЕЛЬ ВООБЩЕ
+        #
+        # На живости 0 модель зовётся на каждое сообщение. На 100 —
+        # примерно в трёх случаях из четырёх бот отвечает заготовкой, и
+        # модель не тратится. Заготовки лежат в `liveliness` и не
+        # выдумываются на лету, поэтому бот никогда не молчит.
+        #
+        # ПРОМТ-БУТЕРБРОД
+        #
+        # Сверху характер, снизу правила. Модель помнит лучше то, что
+        # читает последним, поэтому без нижней части характер к концу
+        # ответа размывался: ответы начинались одинаково и заканчивались
+        # вопросом. Нижняя часть — `liveliness.нижний_промт`.
+        char_key = config.get("char_key") or "ada"
+        свои = state.setdefault("свои_ответы", [])
+
+        def спросить_модель(попытка: int) -> str:
+            """Один вызов модели. Попытка — какая по счёту."""
+            низ = liveliness_mod.нижний_промт(char_key, свои)
+            # Повтор — значит поднимаем температуру: пусть модель скажет
+            # иначе, а не вернёт то же самое третий раз подряд.
+            жар = None if попытка == 0 else 0.6 + 0.35 * попытка
+            return modelswitch_mod.ask(
+                config, prompt, system, asker=ask_model,
+                низ=низ, temperature=жар)
+
+        answer, _источник = liveliness_mod.ответ(
+            char_key, liveliness_mod.получить(state), свои, спросить_модель)
         # Одноразовый признак гасится после ответа: «максимум» должен
         # означать один раз, иначе каждый следующий вопрос снова
         # получал бы простыню.

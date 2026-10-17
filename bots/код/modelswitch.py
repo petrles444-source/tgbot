@@ -27,6 +27,7 @@ r"""Выбор модели: пять вариантов, запасные кл�
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import os
@@ -246,7 +247,8 @@ def provider_pool(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def ask(config: dict[str, Any], prompt: str, system: str,
-         asker: Any = None) -> str:
+         asker: Any = None, низ: str = "",
+         temperature: float | None = None) -> str:
     """Спросить модель, молча перебирая запасные.
 
     Возвращает текст ответа либо МЕТКУ ПРИЧИНЫ отказа: «молчала»,
@@ -263,6 +265,14 @@ def ask(config: dict[str, Any], prompt: str, system: str,
     модели через чужую функцию: подмена в тестах попадала не туда,
     а у двух ботов на одном сервере одна ломала другую. Теперь каждый
     передаёт свою, и подмена работает там, где её ждут.
+
+    НИЖНИЙ ПРОМТ И ТЕМПЕРАТУРА
+
+        Проходят дальше в `asker`, потому что модель помнит лучше то,
+        что читает последним: характер снизу работает сильнее, чем
+        сверху. Температура поднимается при повторе — так модель
+        пробует другой ответ вместо того, чтобы выслать человеку
+        второй раз то же самое.
     """
     if asker is None:
         from ada_bot import ask_model as asker  # локальный: цикл импорта
@@ -281,7 +291,8 @@ def ask(config: dict[str, Any], prompt: str, system: str,
             last = "нет ключа"
             continue
         try:
-            answer = asker(provider, prompt, system, key=key)
+            answer = _спросить(asker, provider, prompt, system, key,
+                               низ, temperature)
         except Exception as exc:  # noqa: BLE001
             _block(provider)
             last = _human(exc)
@@ -291,6 +302,33 @@ def ask(config: dict[str, Any], prompt: str, system: str,
         last = "молчала"
 
     return last
+
+
+def _спросить(asker: Any, provider: dict[str, Any], prompt: str,
+              system: str, key: str, низ: str,
+              temperature: float | None) -> str:
+    """Вызов asker с нижним промтом, если он их понимает.
+
+    Подмены в тестах объявляют `ask_model` с короткой сигнатурой, где
+    новых параметров нет. Раньше здесь просто передавались четыре
+    аргумента, и всё сходилось; с появлением `низ` подмена начала бы
+    падать на лишнем аргументе. Поэтому сначала смотрим сигнатуру —
+    один раз, а не на каждый ответ — и зовём подходящим способом.
+    """
+    if not низ and temperature is None:
+        return asker(provider, prompt, system, key=key)
+    try:
+        параметры = inspect.signature(asker).parameters
+    except (TypeError, ValueError):
+        параметры = {}
+    лишнее = {}
+    if низ and "низ" in параметры:
+        лишнее["низ"] = низ
+    if temperature is not None and "temperature" in параметры:
+        лишнее["temperature"] = temperature
+    if not лишнее:
+        return asker(provider, prompt, system, key=key)
+    return asker(provider, prompt, system, key=key, **лишнее)
 
 
 #: Когда в прошлый раз объясняли, что всё заблокировано. Чтобы не
