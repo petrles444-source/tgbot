@@ -62,6 +62,8 @@ try:
     import fallback as fallback_mod
     import gender as gender_mod
     import liveliness as liveliness_mod
+    import tracker as tracker_mod
+    import ads as ads_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -82,6 +84,8 @@ except ImportError:  # pragma: no cover - прямой запуск из дру�
     import fallback as fallback_mod
     import gender as gender_mod
     import liveliness as liveliness_mod
+    import tracker as tracker_mod
+    import ads as ads_mod
     from persona import (DETAIL_LEVEL, GLOSSARY, PERSONAS, SCIENCE_LEVEL,
                          STYLE, avatar_png, glossary_format_example,
                          pick_persona, persona_by_key, profile_photo_request,
@@ -675,6 +679,26 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
     # Чужие боты и собственные реплики: иначе Ада отвечает сама себе.
     if (message.get("from") or {}).get("is_bot"):
         return
+
+    # СЧЁТЧИК АУДИТОРИИ — ДО ВСЕГО ОСТАЛЬНОГО
+    #
+    # Считаем здесь, а не в конце обработки: до этого места управление
+    # не доходит почти у половины сообщений (молчание в беседе, чужие
+    # реплики), и «сколько людей писало» вышло бы заниженным.
+    #
+    # Что именно пишется — в `трекер`: номер человека в виде хеша,
+    # юзернейм, имя и число сообщений. Текст сообщений не сохраняется
+    # никогда. Сам владелец исключён и по номеру, и по юзернейму.
+    try:
+        что = tracker_mod.заметить(str(config.get("char_key") or "ada"),
+                                   message)
+        if что == "новый":
+            print(f"НОВЫЙ ЧЕЛОВЕК в чате {chat_id}", flush=True)
+    except Exception:  # noqa: BLE001
+        # Счётчик не должен ронять бота. Человек написал — значит
+        # ответить надо, а падать из-за кончившегося места на диске
+        # нельзя: потеряем переписку вместо одного числа в статистике.
+        pass
     if not text and not callback:
         return
     sender = (message.get("from") or {}).get("first_name") or "участник"
@@ -938,6 +962,18 @@ def handle(config: dict[str, Any], message: dict[str, Any]) -> None:
         # собеседнику, и их пол здесь не наш.
         answer, _правок = gender_mod.поправить_род(
             answer, config.get("char_key") or "ada")
+    if answer:
+        # РЕДКАЯ РЕКЛАМА, ОДИН РАЗ ЗА ВСЮ РАБОТУ БОТА
+        #
+        # Здесь, а не в характере: ответ уже готов и уже выправлен
+        # по полу. В промте (chars.prompt) реклама ушла бы в
+        # модель — то есть стоила бы запрос и зависела бы от того,
+        # как модель её поняла или не поняла.
+        #
+        # Здесь ограничение точно исполняется: оно внутри reklama,
+        # а не в тексте подсказки, который модель может не выполнить.
+        answer = ads_mod.добавить_хвост(
+            str(config.get("char_key") or "ada"), answer)
     if answer:
         send(token, chat_id, answer)
 
