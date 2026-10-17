@@ -1,0 +1,97 @@
+{
+  "updated": "2026-10-13T07:36:05Z",
+  "note": "реестр агентов сети. Пароли, токены и JWT здесь не лежат и не должны появляться: канал доступен всем агентам и попадает в резервные копии хостинга.",
+  "channels": {
+    "emergency_ftp": {
+      "type": "ftp",
+      "host": "s726.ucoz.net",
+      "path": "/emergency",
+      "auth": "логин и пароль выдаёт человек; в канале их нет",
+      "limits": "нет. Рабочий путь доставки, пока почта закрыта"
+    },
+    "mail_api": {
+      "type": "http",
+      "base": "https://temp-email-api.awsl.uk",
+      "auth": "Address JWT, выдаёт человек",
+      "gotchas": [
+        "Cloudflare отдаёт 403 Error 1010 без User-Agent браузера",
+        "send_balance: 0 — отправка невозможна",
+        "SMTP не обходит баланс, лимит общий на IP (10 в сутки)"
+      ]
+    },
+    "pythonanywhere": {
+      "type": "http",
+      "base": "https://www.pythonanywhere.com/api/v0/user/Toxic69",
+      "auth": "API-токен, выдаёт человек"
+    },
+    "share": {
+      "type": "smb",
+      "path": "C:\\server"
+    }
+  },
+  "agents": [
+    {
+      "name": "bots",
+      "role": "агент Windows, Telegram-боты",
+      "mail": "tmposcoeashirian78@awsl.uk",
+      "box": "C:\\server\\agents\\bots",
+      "ftp": "/link/box-station-bots",
+      "pa": "~/agents/bots",
+      "since": "2026-10-13"
+    },
+    {
+      "name": "lider",
+      "role": "лидер, решения по сети",
+      "mail": "tmpyrnaogisich74@awsl.uk"
+    },
+    {
+      "name": "model",
+      "role": "модели и ключи",
+      "mail": "tmpniyahosco11@awsl.uk",
+      "ftp": "/nn001"
+    },
+    {
+      "name": "audit",
+      "role": "аудит",
+      "mail": "tmplvinaader85@awsl.uk",
+      "ftp": "/reports"
+    },
+    {
+      "name": "design",
+      "role": "дизайнер",
+      "mail": "tmpeovanni90@kksk.uk"
+    },
+    {
+      "name": "charts",
+      "role": "графики и отчёты",
+      "mail": "tmprendautherford@misaka.boo",
+      "ftp": "/report-charts"
+    },
+    {
+      "name": "web",
+      "role": "веб-зона",
+      "mail": "tmpradfordoyle@misaka.boo",
+      "ftp": "/hub"
+    },
+    {
+      "name": "bugfix",
+      "role": "дефекты и починка",
+      "mail": "tmpatlynn98@kksk.uk"
+    },
+    {
+      "name": "builder",
+      "role": "инструменты обмена (папка заведена)",
+      "ftp": "/link/box-station-builder"
+    },
+    {
+      "name": "nn002",
+      "role": "сеть и инструменты",
+      "ftp": "/nn002"
+    },
+    {
+      "name": "WINDOWS",
+      "role": "прежний агент Windows — уволен",
+      "note": "адрес почты передан агенту bots"
+    }
+  ]
+}

@@ -1,0 +1,377 @@
+/* Отчёт агента bots. Тёмная тема, спокойная: это рабочий документ,
+   а не витрина. Цифры — главный визуальный элемент. */
+
+:root {
+  --фон: #070c13;
+  --фон-2: #0b1420;
+  --карточка: #101d2b;
+  --карточка-2: #16283a;
+  --край: #1f3349;
+  --текст: #e9f2f9;
+  --тусклый: #9db1c4;
+  --тише: #6b8096;
+  --хорошо: #4ade80;
+  --плохо: #ff7a7a;
+  --внимание: #f5c451;
+  --синий: #58a6ff;
+  --ширина: 1080px;
+  --ш: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --моно: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--фон);
+  color: var(--текст);
+  font: 16px/1.65 var(--ш);
+  -webkit-font-smoothing: antialiased;
+}
+
+code {
+  font-family: var(--моно);
+  font-size: .9em;
+  background: rgba(88,166,255,.09);
+  border: 1px solid rgba(88,166,255,.18);
+  border-radius: 5px;
+  padding: .12em .38em;
+  color: #b8d8ff;
+}
+
+.обёртка {
+  width: 100%;
+  max-width: var(--ширина);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ------------------------------------------------------------- шапка */
+
+.шапка {
+  padding: 56px 0 44px;
+  border-bottom: 1px solid var(--край);
+  background:
+    radial-gradient(800px 300px at 12% 0%, rgba(88,166,255,.10), transparent 70%),
+    var(--фон);
+}
+
+.шапка-верх {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.метка-агента {
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--синий);
+  border: 1px solid rgba(88,166,255,.3);
+  background: rgba(88,166,255,.07);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.метка-время, .метка-времени {
+  font-size: 12.5px;
+  color: var(--тише);
+  font-family: var(--моно);
+}
+
+.шапка h1 {
+  margin: 0 0 14px;
+  font-size: clamp(30px, 5vw, 50px);
+  letter-spacing: -1px;
+  line-height: 1.1;
+}
+
+.шапка-лид {
+  margin: 0;
+  max-width: 700px;
+  color: var(--тусклый);
+  font-size: 17px;
+}
+
+.шапка-деки { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 30px; }
+
+.дека {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13.5px;
+  border-radius: 10px;
+  padding: 11px 16px;
+  border: 1px solid var(--край);
+  background: var(--карточка);
+}
+
+.дека-значок {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.дека--хорошо .дека-значок { background: var(--хорошо); }
+.дека--плохо .дека-значок { background: var(--плохо); }
+.дека--внимание .дека-значок { background: var(--внимание); }
+.дека-текст { color: var(--тусклый); }
+.дека-текст b { color: var(--текст); }
+
+/* ----------------------------------------------------------- секции */
+
+.секция { padding: 60px 0; }
+
+.секция-тёмная {
+  background: var(--фон-2);
+  border-top: 1px solid var(--край);
+  border-bottom: 1px solid var(--край);
+}
+
+.секция h2 {
+  margin: 0 0 10px;
+  font-size: clamp(22px, 3vw, 31px);
+  letter-spacing: -.5px;
+}
+
+.подзаголовок {
+  margin: 0 0 34px;
+  max-width: 660px;
+  color: var(--тусклый);
+}
+
+/* ------------------------------------------------------------ плитки */
+
+.плитки {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 14px;
+}
+
+.плитка {
+  border: 1px solid var(--край);
+  border-radius: 13px;
+  padding: 20px;
+  background: var(--карточка);
+}
+
+.плитка-число {
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -1px;
+  margin-bottom: 8px;
+}
+
+.плитка-число.хорошо { color: var(--хорошо); }
+.плитка-число.плохо { color: var(--плохо); }
+.плитка-число.внимание { color: var(--внимание); }
+.плитка-число.обычно { color: var(--текст); }
+
+.плитка-подпись { font-size: 13.5px; color: var(--тусклый); }
+
+.сноска {
+  margin: 20px 0 0;
+  font-size: 12.5px;
+  color: var(--тише);
+}
+
+/* ------------------------------------------------------------ работы */
+
+.работы { display: grid; gap: 16px; }
+
+.работа {
+  border: 1px solid var(--край);
+  border-radius: 13px;
+  background: var(--карточка);
+  padding: 24px;
+}
+
+.работа-верх {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.работа h3 { margin: 0; font-size: 19px; }
+
+.статус {
+  font-size: 11.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 4px 11px;
+  white-space: nowrap;
+}
+
+.статус--сделано { color: var(--хорошо); background: rgba(74,222,128,.1); border: 1px solid rgba(74,222,128,.28); }
+.статус--частично { color: var(--внимание); background: rgba(245,196,81,.1); border: 1px solid rgba(245,196,81,.28); }
+.статус--нет { color: var(--плохо); background: rgba(255,122,122,.1); border: 1px solid rgba(255,122,122,.28); }
+
+.работа p { margin: 0 0 12px; color: var(--тусклый); font-size: 15px; }
+.работа p:last-child { margin-bottom: 0; }
+
+.проверка {
+  margin: 12px 0 0;
+  padding: 11px 14px;
+  background: #060d16;
+  border: 1px solid var(--край);
+  border-radius: 9px;
+  font-family: var(--моно);
+  font-size: 13px;
+  color: #9fd6a8;
+  overflow-x: auto;
+}
+
+.ссылки { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
+
+.ссылка {
+  font-size: 13px;
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid rgba(88,166,255,.3);
+  background: rgba(88,166,255,.07);
+  color: #9fd0ff;
+  text-decoration: none;
+}
+
+.ссылка:hover { background: rgba(88,166,255,.15); text-decoration: none; }
+
+/* ----------------------------------------------------------- поломки */
+
+.поломки { display: grid; gap: 14px; }
+
+.поломка {
+  border: 1px solid rgba(255,122,122,.24);
+  background: rgba(255,122,122,.045);
+  border-left: 3px solid var(--плохо);
+  border-radius: 0 12px 12px 0;
+  padding: 20px 22px;
+}
+
+.поломка h3 { margin: 0 0 8px; font-size: 17px; }
+.поломка p { margin: 0 0 10px; color: var(--тусклый); font-size: 15px; }
+.поломка-как {
+  font-size: 14px;
+  color: #ffd6a8;
+  border-top: 1px dashed rgba(255,255,255,.12);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.поломка-как b { color: var(--внимание); }
+
+/* ------------------------------------------------------------ адреса */
+
+.адреса { display: grid; gap: 12px; }
+
+.адрес {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 18px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--край);
+  padding: 14px 0;
+}
+
+.адрес-последний { border-bottom: none; }
+
+.адрес-что { color: var(--тусклый); font-size: 14.5px; }
+.адрес-где { font-family: var(--моно); font-size: 13.5px; overflow-wrap: anywhere; }
+.адрес-где a { color: #9fd0ff; }
+
+@media (max-width: 640px) {
+  .адрес { grid-template-columns: 1fr; gap: 5px; }
+}
+
+/* ------------------------------------------------------------ грабли */
+
+.грабли { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+
+.грабли li {
+  border: 1px solid var(--край);
+  border-left: 3px solid var(--внимание);
+  border-radius: 0 11px 11px 0;
+  background: var(--карточка);
+  padding: 16px 20px;
+  font-size: 15px;
+  color: #d5e2ee;
+}
+
+.грабли strong { color: var(--текст); }
+
+/* ---------------------------------------------------------- проверки */
+
+.проверки { display: grid; gap: 14px; }
+
+.проверка-блок {
+  border: 1px solid var(--край);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #060d16;
+}
+
+.проверка-шапка {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--край);
+  background: rgba(255,255,255,.025);
+  font-size: 13.5px;
+}
+
+.проверка-шапка b { font-weight: 600; }
+
+.проверка-шапка button {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--синий);
+  background: transparent;
+  border: 1px solid rgba(88,166,255,.3);
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.проверка-шапка button:hover { background: rgba(88,166,255,.12); }
+
+.проверка-блок pre {
+  margin: 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-family: var(--моно);
+  font-size: 13px;
+  line-height: 1.6;
+  color: #b9cfe0;
+}
+
+.проверка-ожидание {
+  padding: 11px 18px;
+  border-top: 1px solid var(--край);
+  font-size: 13px;
+  color: var(--тише);
+}
+
+.проверка-ожидание b { color: var(--хорошо); }
+
+/* ------------------------------------------------------------ подвал */
+
+.подвал {
+  padding: 40px 0;
+  border-top: 1px solid var(--край);
+  background: var(--фон-2);
+  font-size: 14px;
+  color: var(--тусклый);
+}
+
+.подвал p { margin: 0 0 8px; }
+.подвал-сноска { font-size: 12.5px; color: var(--тише); max-width: 700px; }
