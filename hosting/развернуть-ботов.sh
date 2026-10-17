@@ -105,7 +105,7 @@ cfg = {
     "char_key": char_key,
     "persona": "persona",
     "heartbeat_chat_id": "",
-    "face": persona.PERSONAS[0],
+    "face": persona.persona_by_key(char_key) or persona.PERSONAS[0],
     "detail_level": f"{persona.DETAIL_LEVEL} из 10",
     "science_level": f"{persona.SCIENCE_LEVEL} из 10",
 }
