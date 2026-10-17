@@ -23,13 +23,14 @@ DIR=/etc/sora/bots
 show_help() {
     echo "Куда класть токены:"
     echo "  папка: $DIR   (права 700)"
-    echo "  имена: ada.token, anatoly.token, effy.token"
+    echo "  имена: ada.token, anatoly.token, effy.token, sdc.token"
     echo
     echo "Как положить — одна команда, токен подставляете вы:"
     echo
     echo "  ./бот-токен ada 1234567890:AA..."
     echo "  ./бот-токен anatoly 1234567890:BB..."
     echo "  ./бот-токен effy 1234567890:CC..."
+    echo "  ./бот-токен sdc 1234567890:DD..."
     echo
     echo "Что уже положено:"
     if [ -d "$DIR" ]; then
@@ -44,7 +45,8 @@ check_name() {
         ada) ;;
         anatoly) ;;
         effy) ;;
-        *) echo "имя должно быть ada, anatoly или effy" >&2; exit 1 ;;
+        sdc) ;;
+        *) echo "имя должно быть ada, anatoly, effy или sdc" >&2; exit 1 ;;
     esac
 }
 
